@@ -30,7 +30,7 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 [🚨 엔진 전면 개편] 중앙성가 정밀 타겟 파싱 함수
+# 2. 🔍 중앙성가 정밀 타겟 파싱 함수
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
@@ -44,33 +44,25 @@ def extract_songs_from_joongang(songbook_url):
         if response.status_code != 200:
             return None
         
-        # 인코딩 깨짐 방지 (중앙성가는 옛날 규격인 'euc-kr' 혹은 'cp949'일 확률이 높음)
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 웹페이지 내의 모든 텍스트 요소를 긁어모음 (링크 태그 외 td, font 등 전수조사)
         all_text_elements = soup.find_all(string=True)
-        
-        # 기본 도메인 및 경로 추출 (예: https://joongangart.kr/joongang48/)
-        parsed_url = urlparse(songbook_url)
         base_path = songbook_url.rsplit('/', 1)[0] + '/'
         
         for element in all_text_elements:
             clean_text = element.strip()
             
-            # 💡 정규식 매칭: "01. 나의 힘이 되신 주님", "31. 축도송" 형태 조사
-            # 숫자(2자리 이상 권장) 뒤에 마침표(.)가 있고 그 뒤에 한글 곡명이 오는 패턴
+            # 정규식 매칭: "01. 나의 힘이 되신 주님", "31. 축도송" 형태 조사
             match = re.search(r'^(\d+)\.\s*(.+)$', clean_text)
             
             if match:
-                song_num = match.group(1)   # 예: "01"
-                song_title = match.group(2) # 예: "나의 힘이 되신 주님"
+                song_num = match.group(1)   
+                song_title = match.group(2) 
                 full_display_name = f"{song_num}. {song_title}"
                 
-                # 💡 [핵심 자동화] 중앙성가 표준 URL 규칙에 맞춰 직접 하위 링크 조립
-                # 예시: 기반 경로 + '01' + '/pop1.html' -> https://joongangart.kr/joongang48/01/pop1.html
+                # 중앙성가 표준 URL 규칙에 맞춰 직접 하위 링크 조립
                 constructed_sub_url = f"{base_path}{song_num}/pop1.html"
-                
                 songs_db[full_display_name] = constructed_sub_url
                 
         return songs_db
@@ -92,7 +84,6 @@ def deep_extract_youtube_urls(main_html_url):
         links = soup.find_all('a')
         sub_page_urls = {}
         
-        # 1단계: 하위 페이지 내 '소프', '알토', '합창' 버튼들의 링크 수집
         for part_key in PART_MAPPING.keys():
             for link in links:
                 link_text = link.get_text().strip()
@@ -101,7 +92,6 @@ def deep_extract_youtube_urls(main_html_url):
                     sub_page_urls[part_key] = urljoin(main_html_url, link_href)
                     break
                     
-        # 만약 글자로 매칭이 안 되면 순서대로 배정 (합창, 소프, 알토, 테너, 베이스, 반주 순)
         if len(sub_page_urls) < 6:
             valid_hrefs = [urljoin(main_html_url, l.get('href')) for l in links if l.get('href') and not l.get('href').startswith('#')]
             valid_hrefs = [u for u in list(dict.fromkeys(valid_hrefs)) if u != main_html_url]
@@ -109,7 +99,6 @@ def deep_extract_youtube_urls(main_html_url):
                 if i < len(valid_hrefs) and part_key not in sub_page_urls:
                     sub_page_urls[part_key] = valid_hrefs[i]
 
-        # 2단계: 최종 파트별 페이지에서 실제 유튜브 비디오 코드 파싱
         yt_pattern = r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})'
         for part_key, playlist_name in PART_MAPPING.items():
             target_sub_url = sub_page_urls.get(part_key)
@@ -173,7 +162,7 @@ with tabs[2]:
             else:
                 st.error("❌ '번호. 명칭' 패턴을 찾지 못했습니다. 중앙성가 목록용 메인 HTML 주소가 맞는지 확인해 주세요.")
 
-# --- TAB 1: 악보집 풀다운 선택형 트랙 ---
+# --- TAB 1: 악보집 풀다운 선택형 트랙 [🚨 버그 수정 반영 완료] ---
 with tabs[0]:
     st.subheader("📂 등록된 악보집에서 편리하게 고르기")
     if not st.session_state.songbooks:
@@ -181,7 +170,6 @@ with tabs[0]:
     else:
         selected_book = st.selectbox("📚 대상 악보집 선택", list(st.session_state.songbooks.keys()))
         
-        # '01. 나의 힘이 되신 주님' 등이 정렬되어 풀다운 메뉴로 등장합니다.
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
         selected_song = st.selectbox("🎶 등록할 곡 선택 (풀다운)", song_options)
         
@@ -189,13 +177,17 @@ with tabs[0]:
         st.info(f"🎯 매핑된 하위 이동 주소: {corresponding_html_link}")
         
         if st.button("🚀 선택한 곡 최종 목록에 추가"):
+            # 💡 [핵심 버그 수정] 유튜브 API 매핑 에러 방지를 위해 곡 제목 앞에 붙은 넘버링 정제
+            # 예: "01. 나의 힘이 되신 주님" -> "나의 힘이 되신 주님"으로 변환
+            clean_title_only = re.sub(r'^\d+[\s\.\-_:\)]+', '', selected_song).strip()
+            
             new_id = max([item["id"] for item in st.session_state.playlist_items]) + 1 if st.session_state.playlist_items else 1
             st.session_state.playlist_items.append({
                 "id": new_id, 
-                "title": selected_song, 
+                "title": clean_title_only, # 정제된 순수 곡명만 등록 데이터로 저장
                 "url": corresponding_html_link
             })
-            st.success(f"✅ 대기열 등재 완료: {selected_song}")
+            st.success(f"✅ 대기열 등재 완료: {clean_title_only}")
             st.rerun()
 
 # --- TAB 2: 수동 입력 ---
@@ -203,11 +195,11 @@ with tabs[1]:
     st.subheader("✍️ 수동 개별 입력")
     with st.form(key="manual_add_form", clear_on_submit=True):
         col1, col2 = st.columns([2, 3])
-        with col1: manual_title = st.text_input("곡 명칭 직접 입력(예: 01. 나의 힘이 되신 주님)")
+        with col1: manual_title = st.text_input("곡 명칭 직접 입력(예: 나의 힘이 되신 주님)")
         with col2: manual_url = st.text_input("연결 HTML 주소 직접 입력(예: https://joongangart.kr/joongang48/01/pop1.html)")
         if st.form_submit_button(label="수동 추가") and manual_title and manual_url:
             new_id = max([item["id"] for item in st.session_state.playlist_items]) + 1 if st.session_state.playlist_items else 1
-            st.session_state.playlist_items.append({"id": new_id, "title": manual_title, "url": manual_url})
+            st.session_state.playlist_items.append({"id": new_id, "title": manual_title.strip(), "url": manual_url.strip()})
             st.success("✅ 대기열에 추가되었습니다.")
             st.rerun()
 
