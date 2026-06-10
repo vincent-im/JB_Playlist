@@ -34,7 +34,7 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 악보집 리스트 수집 엔진 (33개 곡 전수 수집 복구 버전)
+# 2. 🔍 악보집 리스트 수집 엔진 (33개 곡 전수 수집 버전)
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
@@ -233,9 +233,7 @@ with tabs[2]:
             if parsed_songs:
                 st.session_state.songbooks[book_name] = parsed_songs
                 st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터에 완벽히 로드되었습니다.")
-                st.rerun()
-            else:
-                st.error("❌ 곡 구조를 파싱하지 못했습니다. 주소를 다시 점검해 주세요.")
+                # 💡 [무한 루프 원인 수정] 폼 제출 블록 내부의 무조건적인 st.rerun() 제거하여 새로고침 지옥 해결
 
 # --- TAB 1: 악보집 풀다운 선택형 등록 ---
 with tabs[0]:
@@ -290,7 +288,6 @@ else:
                 break
     st.session_state.playlist_items = updated_items
 
-    # 💡 [🚨 치명적 튕김 오류 해결 완료] 중복 루프 파편 완벽 제어 제거
     for idx, item in enumerate(st.session_state.playlist_items):
         col_txt, col_btn = st.columns([5, 1])
         with col_txt: st.markdown(f"**{idx + 1}. {item['title']}** (URL: {item['url']})")
