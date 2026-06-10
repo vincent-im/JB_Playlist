@@ -78,7 +78,7 @@ with st.form(key="add_song_form", clear_on_submit=True):
         st.session_state.playlist_items.append({"id": new_id, "title": new_title, "url": new_url})
         st.rerun()
 
----
+st.divider()
 
 ### 3-2. 현재 Playlist 목록 표시 및 편집 (순서 조정, 삭제)
 st.subheader("📋 현재 Playlist 등재 목록")
