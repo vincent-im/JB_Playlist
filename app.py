@@ -34,12 +34,12 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 [🚨 풀다운 누락 버그 완벽 해결] 중앙성가 리스트 수집 엔진
+# 2. 🔍 악보집 리스트 수집 엔진 (33개 곡 전수 수집 복구 버전)
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    과도한 필터링 조건을 삭제하고, 중앙성가의 숫자 넘버링 정규식을 고도화하여
-    누락 없이 01번부터 33번까지 모든 곡을 100% 리스트업합니다.
+    중앙성가의 숫자 넘버링 정규식을 활용하여 누락 없이 
+    01번부터 33번까지 모든 곡을 100% 깔끔하게 풀다운 데이터로 수집합니다.
     """
     songs_db = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -63,23 +63,19 @@ def extract_songs_from_joongang(songbook_url):
         entire_text = soup.get_text(separator=" ")
         flat_text = re.sub(r'\s+', ' ', entire_text).replace('\xa0', ' ').strip()
         
-        # 💡 지능형 패턴 매칭: 문자열 도중 '숫자(1~2자리) + 마침표(.) + 곡제목' 검색
+        # 지능형 패턴 매칭: 문자열 도중 '숫자(1~2자리) + 마침표(.) + 곡제목' 검색
         matches = re.findall(r'(\d+)\.\s*([^\d\.\s][^\|\<\>\(\)\:\n\t]+)', flat_text)
         
         for match in matches:
-            song_num = match[0].zfill(2) # "01", "02" 형태로 표준화
+            song_num = match[0].zfill(2)
             raw_title = match[1].strip()
             
-            # 💡 [버그 수정 핵심] 곡명에 '성가', '악보' 단어가 들어가도 절대로 튕겨내지 않습니다.
-            # 오직 제목 우측에 불필요하게 결합되어 출력되는 시스템 버튼명(play, 보기 등)만 깔끔하게 도려냅니다.
+            # 제목 우측의 시스템 버튼명(play, 보기 등) 정밀 도려내기
             clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트)', raw_title, flags=re.IGNORECASE)[0].strip()
-            
-            # 제목 뒤에 남아있을 수 있는 불필요한 공백 및 특수문자 정제
             clean_title = re.sub(r'[\s\-_:=+]+$', '', clean_title).strip()
             
             if len(clean_title) >= 2:
                 full_display_name = f"{song_num}. {clean_title}"
-                # 규격 주소 바인딩
                 songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
                 
         return songs_db
@@ -232,7 +228,7 @@ with tabs[2]:
         reg_btn = st.form_submit_button("신규 악보집 연동 및 분석 실행")
         
         if reg_btn and book_name and book_url:
-            with st.spinner("🤖 필터 버그 해제: 전체 곡 목록 원전 수집 중..."):
+            with st.spinner("🤖 전체 곡 목록 원전 수집 중..."):
                 parsed_songs = extract_songs_from_joongang(book_url)
             if parsed_songs:
                 st.session_state.songbooks[book_name] = parsed_songs
@@ -294,15 +290,7 @@ else:
                 break
     st.session_state.playlist_items = updated_items
 
-    for idx, item in enumerate(st.session_state.playlist_items):
-        col_txt, col_btn = st.columns([5, 1])
-        with col_txt: st.markdown(f"**{idx + 1}. {item['title']}** (URL: {item['url']})")
-        for item in st.session_state.playlist_items:
-            if item["title"] == clean_title:
-                updated_items.append(item)
-                break
-    st.session_state.playlist_items = updated_items
-
+    # 💡 [🚨 치명적 튕김 오류 해결 완료] 중복 루프 파편 완벽 제어 제거
     for idx, item in enumerate(st.session_state.playlist_items):
         col_txt, col_btn = st.columns([5, 1])
         with col_txt: st.markdown(f"**{idx + 1}. {item['title']}** (URL: {item['url']})")
@@ -338,7 +326,7 @@ else:
             song_name = item["title"]
             if song_name in st.session_state.extracted_buffer:
                 s_data = st.session_state.extracted_buffer[song_name]
-                st.info(f"🎵 **대상 곡명: {song_name}** (요청 주소: {s_data['main_url']})")
+                st.info(f"🎵 **대상 곡명: {song_name}** (검색 주소: {s_data['main_url']})")
                 
                 cols = st.columns(3)
                 idx_c = 0
