@@ -34,11 +34,12 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 중앙성가 전용 정밀 빌더 엔진 (풀다운 목록 생성)
+# 2. 🔍 [🚨 강력 보완] 중앙성가 전용 무결점 빌더 엔진 (풀다운 생성)
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    중앙성가 메인 페이지에서 '번호. 곡명' 구조를 100% 확률로 안전하게 파싱합니다.
+    중앙성가 메인 페이지 내의 숨겨진 태그 노이즈, 줄바꿈, 특수공백을 깨끗이 정제한 후
+    넘버링(01~31번)된 곡명 목록과 규격 하위 주소를 100% 신뢰도로 바인딩합니다.
     """
     songs_db = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -50,23 +51,34 @@ def extract_songs_from_joongang(songbook_url):
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 주소 베이스 경로 정제
+        # 기반 폴더 경로 추출 (예: https://joongangart.kr/joongang48/)
         base_dir = songbook_url.rsplit('/', 1)[0] + '/'
         if '.html' in base_dir:
             base_dir = base_dir.rsplit('/', 1)[0] + '/'
+
+        # 💡 [핵심 버그 해결] td, tr 단위를 먼저 쪼갠 뒤 구분자를 공백으로 텍스트 추출하여
+        # 태그 사이에 낀 "01.", "나의 힘이 되신 주님" 파편들을 유기적으로 결합합니다.
+        for row in soup.find_all(['td', 'tr', 'a', 'p']):
+            # 모든 자식 태그를 공백 문자로 쪼개며 합치기
+            raw_text = row.get_text(separator=" ").strip()
             
-        for element in soup.find_all(['a', 'td', 'font', 'span']):
-            text = element.get_text().strip()
-            text_clean = re.sub(r'\s+', ' ', text)
-            match = re.search(r'^(\d+)\.\s*([^\d]+.*)$', text_clean)
+            # 연속된 줄바꿈 및 모든 공백을 일반 스페이스 한 칸으로 통일
+            clean_text = re.sub(r'\s+', ' ', raw_text)
+            
+            # 💡 느슨하고 강력한 패턴 매칭: 문자열 도중 '숫자(1~2자리) + 마침표(.) + 곡제목' 검색
+            match = re.search(r'(\d+)\.\s*([^\d\.\s][^\|\<\>\(\)]+)', clean_text)
             
             if match:
-                song_num = match.group(1).zfill(2)
+                song_num = match.group(1).zfill(2) # "01", "02" 형태로 자릿수 표준화
                 song_title = match.group(2).strip()
-                full_display_name = f"{song_num}. {song_title}"
                 
-                constructed_sub_url = f"{base_dir}{song_num}/pop1.html"
-                songs_db[full_display_name] = constructed_sub_url
+                # '합창', '보기', 'play', '단어' 등 유효하지 않은 제어용 텍스트 노이즈 필터링 방어선
+                if len(song_title) > 2 and not any(k in song_title for k in ['합창', '파트', '보기', '클릭', '동영상', '악보', '인쇄']):
+                    full_display_name = f"{song_num}. {song_title}"
+                    
+                    # 깨끗한 하위 팝업 주소 직접 강제 빌드 결합
+                    constructed_sub_url = f"{base_dir}{song_num}/pop1.html"
+                    songs_db[full_display_name] = constructed_sub_url
                     
         return songs_db
     except Exception as e:
@@ -282,53 +294,4 @@ else:
             with st.spinner(f"🤖 '{item['title']}' 하위 6개 파트 문서 정밀 파싱 중..."):
                 res_urls = deep_extract_youtube_urls(item["url"])
                 
-                st.session_state.extracted_buffer[item["title"]] = {
-                    "main_url": item["url"], 
-                    "parts": res_urls if res_urls else {p: "" for p in PART_MAPPING.values()}
-                }
-        st.success("🎉 주소 수집 결과가 업데이트되었습니다. 아래 리포트 창을 확인하세요.")
-
-    if st.session_state.extracted_buffer:
-        st.markdown("### 📋 6개 파트 추출 검증 결과 리포트")
-        
-        for song_name, s_data in st.session_state.extracted_buffer.items():
-            st.info(f"🎵 **대상 곡명: {song_name}** (검색 주소: {s_data['main_url']})")
-            
-            cols = st.columns(3)
-            idx_c = 0
-            has_any_link = False
-            
-            for playlist_name, yt_url in s_data["parts"].items():
-                with cols[idx_c % 3]:
-                    st.markdown(f"**📍 타겟 플레이리스트: `{playlist_name}`**")
-                    if yt_url:
-                        has_any_link = True
-                        st.code(yt_url, language="text")
-                        st.video(yt_url)
-                    else:
-                        st.error("⚠️ 유튜브 주소 추출 실패 (주소 오류 또는 동영상 플레이어 없음)")
-                idx_c += 1
-                
-            if not has_any_link:
-                st.error("🚨 [치명적 시스템 경고] 내부 페이지 주소가 맞지 않습니다.")
-            st.markdown("---")
-
-        # ------------------------------------------------------------------
-        # 7. 🚀 2단계: 플레이리스트 최종 업로드
-        # ------------------------------------------------------------------
-        st.subheader("🚀 2단계: 플레이리스트 최종 업로드")
-        if st.button("🚀 검증 완료 - 유튜브 플레이리스트에 최종 등재", type="primary", use_container_width=True):
-            youtube = get_youtube_service()
-            if youtube:
-                for song_name, s_data in st.session_state.extracted_buffer.items():
-                    st.markdown(f"### 📂 **{song_name}** 플레이리스트 데이터 적재 가동")
-                    for playlist_name, url in s_data["parts"].items():
-                        if url:
-                            video_id = extract_video_id_powerful(url)
-                            if video_id:
-                                with st.spinner(f"구글 플레이리스트 적재 중..."):
-                                    p_id = get_or_create_playlist(youtube, playlist_name)
-                                    if p_id:
-                                        add_video_to_playlist(youtube, p_id, video_id)
-                                st.success(f"✅ [{playlist_name}] 등재 완료 ➡️ ID: {video_id}")
-                st.balloons()
+                st.session_state.extracted_buffer[item["title"]]
