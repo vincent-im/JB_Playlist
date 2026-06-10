@@ -6,6 +6,7 @@ from urllib.parse import urljoin, urlparse
 from streamlit_sortables import sort_items
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+import googleapiclient.errors
 
 # ------------------------------------------------------------------
 # 1. 초기 세션 상태 및 기본 설정
@@ -20,7 +21,7 @@ if "playlist_items" not in st.session_state:
 if "songbooks" not in st.session_state:
     st.session_state.songbooks = {}
 
-# 6개 타겟 플레이리스트 정의
+# 6개 타겟 플레이리스트 명칭 매핑 정의
 PART_MAPPING = {
     "합창": "Test(합창)",
     "소프": "Test(S)",
@@ -31,7 +32,7 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 중앙성가 전용 지능형 크롤링 함수 엔진
+# 2. 🔍 중앙성가 전용 정밀 크롤링 및 유튜브 ID 추출 엔진
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
@@ -45,7 +46,6 @@ def extract_songs_from_joongang(songbook_url):
         if response.status_code != 200:
             return None
         
-        # 한글 인코딩 깨짐 보정
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -54,8 +54,6 @@ def extract_songs_from_joongang(songbook_url):
         
         for element in all_text_elements:
             clean_text = element.strip()
-            
-            # 정규식 패턴 탐색: "01. 나의 힘이 되신 주님" 구조 캡처
             match = re.search(r'^(\d+)\.\s*(.+)$', clean_text)
             
             if match:
@@ -63,7 +61,6 @@ def extract_songs_from_joongang(songbook_url):
                 song_title = match.group(2) 
                 full_display_name = f"{song_num}. {song_title}"
                 
-                # 중앙성가 표준 pop 규격 주소 강제 조립 매핑
                 constructed_sub_url = f"{base_path}{song_num}/pop1.html"
                 songs_db[full_display_name] = constructed_sub_url
                 
@@ -72,8 +69,27 @@ def extract_songs_from_joongang(songbook_url):
         st.error(f"❌ 악보집 파싱 중 오류 발생: {e}")
         return None
 
+def extract_video_id_powerful(text_content):
+    """
+    [🚨 강력해진 유튜브 ID 추출 엔진]
+    HTML 소스코드 전체를 분석하여 일반 링크, embed 링크, iframe 내부 주소 등
+    모든 형태의 11자리 고유 유튜브 비디오 ID를 빈틈없이 추출합니다.
+    """
+    patterns = [
+        r'youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})',
+        r'youtube\.com/embed/([a-zA-Z0-9_-]{11})',
+        r'youtu\.be/([a-zA-Z0-9_-]{11})',
+        r'youtube\.com/v/([a-zA-Z0-9_-]{11})',
+        r'vi/([a-zA-Z0-9_-]{11})'
+    ]
+    for pattern in patterns:
+        matches = re.findall(pattern, text_content)
+        if matches:
+            return matches[0] # 첫 번째 매칭된 유효한 ID 반환
+    return None
+
 def deep_extract_youtube_urls(main_html_url):
-    """ 각 곡별 하위 페이지(pop1.html) 내부에서 6개 파트 버튼 뒤에 숨겨진 원본 유튜브 주소를 획득합니다. """
+    """ 각 곡별 하위 페이지(pop1.html) 내부에서 6개 파트 페이지를 추적하여 실제 비디오 코드를 파싱합니다. """
     final_result = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
@@ -95,7 +111,7 @@ def deep_extract_youtube_urls(main_html_url):
                     sub_page_urls[part_key] = urljoin(main_html_url, link_href)
                     break
                     
-        # 2단계: 텍스트 매칭 미비 시 순서 기반 자동 배열 대응
+        # 2단계: 순서 기반 자동 배열 백업 대응
         if len(sub_page_urls) < 6:
             valid_hrefs = [urljoin(main_html_url, l.get('href')) for l in links if l.get('href') and not l.get('href').startswith('#')]
             valid_hrefs = [u for u in list(dict.fromkeys(valid_hrefs)) if u != main_html_url]
@@ -103,15 +119,20 @@ def deep_extract_youtube_urls(main_html_url):
                 if i < len(valid_hrefs) and part_key not in sub_page_urls:
                     sub_page_urls[part_key] = valid_hrefs[i]
 
-        # 3단계: 도달한 최종 파트 문서에서 11자리 고유 유튜브 ID 패턴 크롤링
-        yt_pattern = r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})'
+        # 3단계: 도달한 최종 파트 문서에서 고도화된 정규식으로 유튜브 ID 추적
         for part_key, playlist_name in PART_MAPPING.items():
             target_sub_url = sub_page_urls.get(part_key)
             if target_sub_url:
                 try:
                     sub_res = requests.get(target_sub_url, headers=headers, timeout=5)
-                    found_ids = re.findall(yt_pattern, sub_res.text) if sub_res.status_code == 200 else []
-                    final_result[playlist_name] = f"https://www.youtube.com/watch?v={found_ids[0]}" if found_ids else ""
+                    sub_res.encoding = sub_res.apparent_encoding
+                    
+                    # 전면 개편된 추출 엔진 기동
+                    video_id = extract_video_id_powerful(sub_res.text)
+                    if video_id:
+                        final_result[playlist_name] = f"https://www.youtube.com/watch?v={video_id}"
+                    else:
+                        final_result[playlist_name] = ""
                 except:
                     final_result[playlist_name] = ""
             else:
@@ -125,33 +146,61 @@ def deep_extract_youtube_urls(main_html_url):
 # ------------------------------------------------------------------
 def get_youtube_service():
     try:
-        creds = Credentials(token=None, refresh_token=st.secrets["google"]["refresh_token"],
-                            token_uri="https://oauth2.googleapis.com/token",
-                            client_id=st.secrets["google"]["client_id"], client_secret=st.secrets["google"]["client_secret"])
+        creds = Credentials(
+            token=None, 
+            refresh_token=st.secrets["google"]["refresh_token"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=st.secrets["google"]["client_id"], 
+            client_secret=st.secrets["google"]["client_secret"]
+        )
         return build('youtube', 'v3', credentials=creds)
-    except:
+    except Exception as e:
+        st.error(f"❌ 구글 Secrets 설정 및 인증 실패 원인: {e}")
         return None
 
-def extract_video_id(url):
-    m = re.search(r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})', url)
-    return m.group(1) if m else None
-
 def get_or_create_playlist(youtube, title):
-    r = youtube.playlists().list(part="snippet", mine=True, maxResults=50).execute()
-    for item in r.get("items", []):
-        if item["snippet"]["title"] == title: 
-            return item["id"]
-    return youtube.playlists().insert(
-        part="snippet,status", 
-        body={"snippet": {"title": title, "description": "에이전트 자동화 생성 대기열"}, "status": {"privacyStatus": "private"}}
-    ).execute()["id"]
+    """ 내 계정에 동일한 이름의 플레이리스트가 있는지 확인하고, 없으면 생성 후 ID 반환 """
+    try:
+        request = youtube.playlists().list(part="snippet", mine=True, maxResults=50)
+        response = request.execute()
+        for item in response.get("items", []):
+            if item["snippet"]["title"] == title: 
+                return item["id"]
+        
+        # 일치하는 플레이리스트 명칭이 없으면 비공개로 생성
+        create_request = youtube.playlists().insert(
+            part="snippet,status", 
+            body={
+                "snippet": {"title": title, "description": "에이전트 시스템 자동 생성 플레이리스트"}, 
+                "status": {"privacyStatus": "private"}
+            }
+        )
+        created_info = create_request.execute()
+        return created_info["id"]
+    except Exception as e:
+        st.error(f"❌ 플레이리스트 확인/생성 중 오류: {e}")
+        return None
 
 def add_video_to_playlist(youtube, p_id, v_id):
-    return youtube.playlistItems().insert(
-        part="snippet", 
-        body={"snippet": {"playlistId": p_id, "resourceId": {"kind": "youtube#video", "videoId": v_id}}}
-    ).execute()
-
+    """ 비디오 ID를 타겟 플레이리스트 ID 내부에 최종 적재합니다. """
+    try:
+        request = youtube.playlistItems().insert(
+            part="snippet", 
+            body={
+                "snippet": {
+                    "playlistId": p_id, 
+                    "resourceId": {"kind": "youtube#video", "videoId": v_id}
+                }
+            }
+        )
+        return request.execute()
+    except googleapiclient.errors.HttpError as e:
+        # 이미 플레이리스트에 동일한 영상이 기등재되어 있거나 권한 부족 시 오류 제어
+        if e.resp.status == 409:
+            st.warning(f"ℹ️ 이미 플레이리스트에 등록되어 있는 영상입니다. (ID: {v_id})")
+        else:
+            st.error(f"❌ 유튜브 등록 API 오류: {e}")
+        return None
 
 # ------------------------------------------------------------------
 # 4. 사용자 인터페이스(UI) 레이아웃 공간
@@ -176,7 +225,7 @@ with tabs[2]:
             else:
                 st.error("❌ '번호. 명칭' 패턴 식별 실패. 목록용 전용 메인 HTML 주소를 다시 점검하세요.")
 
-# --- TAB 1: 악보집 풀다운 선택형 등록 기동 ---
+# --- TAB 1: 악보집 풀다운 선택형 등록 ---
 with tabs[0]:
     st.subheader("📂 등록된 악보집에서 편리하게 고르기")
     if not st.session_state.songbooks:
@@ -191,7 +240,7 @@ with tabs[0]:
         st.info(f"🎯 매핑된 하위 이동 주소: {corresponding_html_link}")
         
         if st.button("🚀 선택한 곡 최종 목록에 추가"):
-            # 유튜브 API 플레이리스트 정합성 및 무오류 연동을 위한 전행 넘버링 글자 정제 작업
+            # 넘버링 글자 정제 작업
             clean_title_only = re.sub(r'^\d+[\s\.\-_:\)]+', '', selected_song).strip()
             
             new_id = max([item["id"] for item in st.session_state.playlist_items]) + 1 if st.session_state.playlist_items else 1
@@ -254,17 +303,25 @@ else:
         if youtube:
             for item in st.session_state.playlist_items:
                 st.markdown(f"### 📂 곡명: **{item['title']}** 분석 및 등록")
+                
                 with st.status("🤖 중앙성가 6개 파트 하위 팝업 추적 및 유튜브 원본 링크 추출 중...", expanded=True) as status:
                     extracted_part_urls = deep_extract_youtube_urls(item["url"])
-                    status.update(label="🧬 6개 파트 주소 추출 완료!", state="complete")
+                    status.update(label="🧬 6개 파트 주소 추출 프로세스 완료!", state="complete")
                 
                 if extracted_part_urls:
                     for playlist_name, url in extracted_part_urls.items():
                         if url:
-                            video_id = extract_video_id(url)
+                            # 개편된 전용 함수를 통해 비디오 ID 재정밀 파싱
+                            video_id = extract_video_id_powerful(url)
                             if video_id:
                                 with st.spinner(f"'{playlist_name}'에 등록 중..."):
                                     p_id = get_or_create_playlist(youtube, playlist_name)
-                                    add_video_to_playlist(youtube, p_id, video_id)
-                                st.success(f"✅ [{playlist_name}] 등록 성공! ➡️ {url}")
+                                    if p_id:
+                                        add_video_to_playlist(youtube, p_id, video_id)
+                                st.success(f"✅ [{playlist_name}] 등록 성공! ➡️ {url} (ID: {video_id})")
+                            else:
+                                st.error(f"❌ {playlist_name}: 수집된 주소에서 최종 유튜브 비디오 ID를 컴파일하지 못했습니다.")
+                        else:
+                            st.warning(f"⚠️ [{playlist_name}]: 연관 하위 HTML 문서 내부에서 유튜브 영상 식별 불가.")
             st.balloons()
+            st.success("🎉 플레이리스트 업로드가 성공적으로 완료되었습니다!")
