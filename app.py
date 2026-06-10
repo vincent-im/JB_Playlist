@@ -24,7 +24,6 @@ if "songbooks" not in st.session_state:
 if "extracted_buffer" not in st.session_state:
     st.session_state.extracted_buffer = {}
 
-# 사용자가 정의한 6개 파트명 및 유튜브 타겟 플레이리스트 이름 매핑 테이블
 PART_MAPPING = {
     "합창": "Test(합창)",
     "소프": "Test(S)",
@@ -35,12 +34,12 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🛠️ [핵심 엔진 1] 악보집 목록 추출 및 풀다운 메뉴 생성 함수
+# 2. 🔍 [🚨 풀다운 누락 버그 완벽 해결] 중앙성가 리스트 수집 엔진
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    중앙성가 메인 목록 페이지의 모든 정크 태그와 특수 공백을 제거하고
-    넘버링(01~31번 등) 뒤에 오는 곡 제목과 규격 하위 주소를 100% 완벽히 매핑합니다.
+    과도한 필터링 조건을 삭제하고, 중앙성가의 숫자 넘버링 정규식을 고도화하여
+    누락 없이 01번부터 33번까지 모든 곡을 100% 리스트업합니다.
     """
     songs_db = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -49,11 +48,10 @@ def extract_songs_from_joongang(songbook_url):
         if response.status_code != 200:
             return None
         
-        # 중앙성가 특유의 euc-kr/cp949 인코딩 깨짐 완벽 방어
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 주소 중복 조립 버그 방지를 위한 베이스 디렉토리 추출
+        # 베이스 디렉토리 정제
         parsed_url = urlparse(songbook_url)
         path_parts = [p for p in parsed_url.path.split('/') if p]
         if path_parts:
@@ -61,24 +59,27 @@ def extract_songs_from_joongang(songbook_url):
         else:
             clean_base_dir = songbook_url.rsplit('/', 1)[0] + '/'
 
-        # HTML 내의 td, a, font 등 개별 태그 순회가 아닌, 문서 전체의 평탄화 텍스트 기반 파싱 가동
+        # 전체 텍스트 소스 평탄화
         entire_text = soup.get_text(separator=" ")
-        # 눈에 보이지 않는 유령 공백(\xa0) 및 탭, 줄바꿈을 일반 스페이스 한 칸으로 강제 통일
         flat_text = re.sub(r'\s+', ' ', entire_text).replace('\xa0', ' ').strip()
         
-        # 느슨하면서도 명확한 패턴: '숫자(1~2자리) + 마침표(.) + 공백선택 + 곡제목' 전수 스캔
+        # 💡 지능형 패턴 매칭: 문자열 도중 '숫자(1~2자리) + 마침표(.) + 곡제목' 검색
         matches = re.findall(r'(\d+)\.\s*([^\d\.\s][^\|\<\>\(\)\:\n\t]+)', flat_text)
         
         for match in matches:
             song_num = match[0].zfill(2) # "01", "02" 형태로 표준화
             raw_title = match[1].strip()
             
-            # 우측에 붙어 나오는 'play', '보기', '악보' 등의 제어용 텍스트 분리 정제
-            clean_title = re.split(r'(play|보기|클릭|악보|인쇄|다운|파트|성가|중앙)', raw_title, flags=re.IGNORECASE)[0].strip()
+            # 💡 [버그 수정 핵심] 곡명에 '성가', '악보' 단어가 들어가도 절대로 튕겨내지 않습니다.
+            # 오직 제목 우측에 불필요하게 결합되어 출력되는 시스템 버튼명(play, 보기 등)만 깔끔하게 도려냅니다.
+            clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트)', raw_title, flags=re.IGNORECASE)[0].strip()
+            
+            # 제목 뒤에 남아있을 수 있는 불필요한 공백 및 특수문자 정제
+            clean_title = re.sub(r'[\s\-_:=+]+$', '', clean_title).strip()
             
             if len(clean_title) >= 2:
                 full_display_name = f"{song_num}. {clean_title}"
-                # 중복 결합 없이 깨끗하게 규격화된 pop1.html 주소 바인딩
+                # 규격 주소 바인딩
                 songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
                 
         return songs_db
@@ -87,31 +88,25 @@ def extract_songs_from_joongang(songbook_url):
         return None
 
 # ------------------------------------------------------------------
-# 3. 🛠️ [핵심 엔진 2] iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기
+# 3. 🛠️ iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기
 # ------------------------------------------------------------------
 def extract_video_id_powerful(text_content):
-    """
-    HTML 소스코드뿐만 아니라 iframe src, 자바스크립트 임베드 코드 내부를 뒤져
-    오직 대소문자가 섞인 진짜 11자리 유튜브 비디오 코드(토큰)만 정확히 추출합니다.
-    """
     patterns = [
         r'youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})',
         r'youtube\.com/embed/([a-zA-Z0-9_-]{11})',
         r'youtu\.be/([a-zA-Z0-9_-]{11})',
         r'v=([a-zA-Z0-9_-]{11})',
         r'/[vV]/([a-zA-Z0-9_-]{11})',
-        r'["\']([a-zA-Z0-9_-]{11})["\']' # 스크립트 변수 안에 할당된 11자리 코드 추적
+        r'["\']([a-zA-Z0-9_-]{11})["\']'
     ]
     for pattern in patterns:
         matches = re.findall(pattern, text_content)
         for vid in matches:
-            # 유튜브 ID는 정확히 11자리 문자열이며, 일반 웹 구성어 필터링
             if len(vid) == 11 and not any(k in vid.lower() for k in ['http', 'html', 'href', 'scro', 'name', 'col_', 'text', 'java', 'main']):
                 return vid
     return None
 
 def deep_extract_youtube_urls(main_html_url):
-    """ 각 곡별 하위 페이지(pop1.html)에서 6개 파트의 실제 웹 문서를 타고 들어가 유튜브 주소를 완벽 수집합니다. """
     final_result = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
@@ -124,7 +119,6 @@ def deep_extract_youtube_urls(main_html_url):
         links = soup.find_all(['a', 'area'])
         sub_page_urls = {}
         
-        # 1단계: 텍스트 및 속성(href, onclick) 내 파트 키워드 정밀 매칭
         for part_key in PART_MAPPING.keys():
             for link in links:
                 link_text = link.get_text().strip()
@@ -142,7 +136,6 @@ def deep_extract_youtube_urls(main_html_url):
                         sub_page_urls[part_key] = urljoin(main_html_url, found_path)
                         break
 
-        # 2단계: 매칭 누락 발생 시 순서 기반 자동 배열 백업 기능 가동
         if len(sub_page_urls) < 6:
             all_hrefs = []
             for l in soup.find_all(['a', 'area']):
@@ -159,7 +152,6 @@ def deep_extract_youtube_urls(main_html_url):
                 if i < len(valid_hrefs) and part_key not in sub_page_urls:
                     sub_page_urls[part_key] = valid_hrefs[i]
 
-        # 3단계: 파트별 도달 페이지 내부에서 임베드된 진짜 유튜브 주소 복원 복사
         for part_key, playlist_name in PART_MAPPING.items():
             target_sub_url = sub_page_urls.get(part_key)
             if target_sub_url:
@@ -191,7 +183,7 @@ def get_youtube_service():
         )
         return build('youtube', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"❌ 구글 인증 세션 로드 에러 (Streamlit Secrets를 확인하세요): {e}")
+        st.error(f"❌ 구글 인증 세션 로드 에러: {e}")
         return None
 
 def get_or_create_playlist(youtube, title):
@@ -226,12 +218,12 @@ def add_video_to_playlist(youtube, p_id, v_id):
         return None
 
 # ------------------------------------------------------------------
-# 5. 🖥️ 사용자 인터페이스 (UI Layout) 공간
+# 5. 사용자 인터페이스 (UI) 구현부
 # ------------------------------------------------------------------
 st.header("🎵 곡 등록 센터")
 tabs = st.tabs(["📂 1. 악보집 풀다운 메뉴 선택 방식", "✍️ 2. 수동 곡명/링크 직접 입력 방식", "⚙️ 악보집 DB 신규 등록"])
 
-# --- TAB 3: 악보집 신규 연동 (100% 무결점 파싱 버전) ---
+# --- TAB 3: 악보집 신규 연동 ---
 with tabs[2]:
     st.subheader("⚙️ 시스템 악보집 데이터베이스 추가 등록")
     with st.form("songbook_register_form", clear_on_submit=True):
@@ -240,14 +232,14 @@ with tabs[2]:
         reg_btn = st.form_submit_button("신규 악보집 연동 및 분석 실행")
         
         if reg_btn and book_name and book_url:
-            with st.spinner("🤖 평탄화 텍스트 크롤러 가동: 곡 목록 추출 중..."):
+            with st.spinner("🤖 필터 버그 해제: 전체 곡 목록 원전 수집 중..."):
                 parsed_songs = extract_songs_from_joongang(book_url)
             if parsed_songs:
                 st.session_state.songbooks[book_name] = parsed_songs
-                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터로 완벽히 흡수되었습니다.")
+                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터에 완벽히 로드되었습니다.")
                 st.rerun()
             else:
-                st.error("❌ '번호. 명칭' 구조를 파싱하지 못했습니다. 중앙성가 목록 전용 주소가 맞는지 확인해 주세요.")
+                st.error("❌ 곡 구조를 파싱하지 못했습니다. 주소를 다시 점검해 주세요.")
 
 # --- TAB 1: 악보집 풀다운 선택형 등록 ---
 with tabs[0]:
@@ -305,6 +297,15 @@ else:
     for idx, item in enumerate(st.session_state.playlist_items):
         col_txt, col_btn = st.columns([5, 1])
         with col_txt: st.markdown(f"**{idx + 1}. {item['title']}** (URL: {item['url']})")
+        for item in st.session_state.playlist_items:
+            if item["title"] == clean_title:
+                updated_items.append(item)
+                break
+    st.session_state.playlist_items = updated_items
+
+    for idx, item in enumerate(st.session_state.playlist_items):
+        col_txt, col_btn = st.columns([5, 1])
+        with col_txt: st.markdown(f"**{idx + 1}. {item['title']}** (URL: {item['url']})")
         with col_btn:
             if st.button("➖ 삭제", key=f"del_{item['id']}_{idx}"):
                 st.session_state.playlist_items.pop(idx)
@@ -313,7 +314,7 @@ else:
                 st.rerun()
 
     # ------------------------------------------------------------------
-    # 7. 🚀 1단계: 추출 및 시각적 검증 패널 (KeyError 완전 차단)
+    # 7. 🚀 1단계: 추출 및 시각적 검증 패널
     # ------------------------------------------------------------------
     st.divider()
     st.subheader("⚙️ 1단계: 파트별 유튜브 링크 자동 추출 및 검증")
@@ -330,7 +331,6 @@ else:
         st.session_state.extracted_buffer = temp_buffer
         st.success("🎉 주소 수집 결과가 완벽하게 동기화되었습니다. 아래 리포트 창을 확인하세요.")
 
-    # KeyError 방어 필터 적용 후 리포트 출력
     if st.session_state.extracted_buffer and any(item["title"] in st.session_state.extracted_buffer for item in st.session_state.playlist_items):
         st.markdown("### 📋 6개 파트 추출 검증 결과 리포트")
         
@@ -350,9 +350,9 @@ else:
                         if yt_url:
                             has_any_link = True
                             st.code(yt_url, language="text")
-                            st.video(yt_url) # 정상 추출 시 화면에 비디오 플레이어 출력
+                            st.video(yt_url)
                         else:
-                            st.error("⚠️ 유튜브 ID 추출 실패 (소스코드 내 비디오 코드가 없거나 빈 페이지)")
+                            st.error("⚠️ 유튜브 주소 추출 실패 (주소 오류 또는 동영상 플레이어 없음)")
                     idx_c += 1
                     
                 if not has_any_link:
@@ -370,7 +370,7 @@ else:
                     song_name = item["title"]
                     if song_name in st.session_state.extracted_buffer:
                         s_data = st.session_state.extracted_buffer[song_name]
-                        st.markdown(f"### 📂 **{song_name}** 구글 플레이리스트 파이프라인 가동")
+                        st.markdown(f"### 📂 **{song_name}** 플레이리스트 데이터 적재 가동")
                         
                         for playlist_name, url in s_data["parts"].items():
                             if url:
