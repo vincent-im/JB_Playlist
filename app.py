@@ -40,21 +40,19 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 [🚨 고정 데이터 제거 / 완전 동적 파싱 전환] 악보집 리스트 수집 엔진
+# 2. 🔍 악보집 리스트 수집 엔진 (완전 동적 파싱 방식)
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    특정 성가집 고정 데이터를 배제하고, 입력된 임의의 중앙성가 목차 URL을 실시간 분석하여
+    입력된 임의의 중앙성가 목차 URL을 실시간 분석하여
     해당 악보집에 수록된 '일련번호. 곡명' 전수를 동적으로 바인딩합니다.
     """
     songs_db = {}
-    
-    # 봇 차단을 회피하기 위한 모바일/데스크톱 혼합형 크롤링 헤더 세팅
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     }
     
-    # 베이스 디렉토리 정제 (예: .../joongang45/, .../joongang48/)
+    # 베이스 디렉토리 정제
     parsed_url = urlparse(songbook_url)
     path_parts = [p for p in parsed_url.path.split('/') if p]
     if path_parts:
@@ -63,7 +61,6 @@ def extract_songs_from_joongang(songbook_url):
         clean_base_dir = songbook_url.rsplit('/', 1)[0] + '/'
 
     try:
-        # 단시간 연타로 인한 차단을 방지하기 위해 0.3초 미세 대기 주입
         time.sleep(0.3)
         response = requests.get(songbook_url, headers=headers, timeout=10)
         
@@ -71,28 +68,23 @@ def extract_songs_from_joongang(songbook_url):
             response.encoding = response.apparent_encoding
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 💡 [핵심 복구] 모든 테이블 셀(td)을 전수 조사하여 각 성가집의 실제 곡명을 동적 스캔합니다.
             td_cells = soup.find_all('td')
-            
             for cell in td_cells:
                 cell_text = cell.get_text().strip()
-                # 줄바꿈 및 특수 공백 제거 평탄화
                 cell_text_clean = re.sub(r'\s+', ' ', cell_text).replace('\xa0', ' ').strip()
                 
                 # '숫자(1~2자리) + 마침표(.) + 명칭' 구조 찾아내기
                 match = re.match(r'^(\d+)\.\s*(.+)$', cell_text_clean)
                 if match:
-                    song_num = match.group(1).zfill(2) # "01", "02" 형태로 표준화
+                    song_num = match.group(1).zfill(2)
                     raw_title = match.group(2).strip()
                     
-                    # 제목 우측의 시스템 버튼 레이블(play, 보기 등) 유연하게 절단
+                    # 제목 우측의 시스템 버튼 레이블 유연하게 절단
                     clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트|듣기|wma|mp3)', raw_title, flags=re.IGNORECASE)[0].strip()
                     clean_title = re.sub(r'[\s\-_:=+.,/]+$', '', clean_title).strip()
                     
-                    # 순수 숫자가 아닌 유효한 곡명인 경우에만 세션 DB에 바인딩
                     if len(clean_title) >= 2 and not clean_title.isdigit():
                         full_display_name = f"{song_num}. {clean_title}"
-                        # 해당 성가집 고유 폴더 경로에 맞춰 pop1.html 이동 주소 빌드
                         songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
                         
     except Exception as e:
@@ -118,7 +110,7 @@ def extract_songs_from_joongang(songbook_url):
     return songs_db
 
 # ------------------------------------------------------------------
-# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기 (정상 기능 원형 유지)
+# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기
 # ------------------------------------------------------------------
 def extract_video_id_powerful(text_content):
     patterns = [
@@ -202,7 +194,7 @@ def deep_extract_youtube_urls(main_html_url):
         return None
 
 # ------------------------------------------------------------------
-# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (원형 유지)
+# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈
 # ------------------------------------------------------------------
 def get_youtube_service():
     if not HAS_GOOGLE_LIB:
@@ -261,11 +253,12 @@ def add_video_to_playlist(youtube, p_id, v_id):
 st.header("🎵 곡 등록 센터")
 tabs = st.tabs(["📂 1. 악보집 풀다운 메뉴 선택 방식", "✍️ 2. 수동 곡명/링크 직접 입력 방식", "⚙️ 악보집 DB 신규 등록"])
 
-# --- TAB 3: 악보집 신규 연동 (완전 동적 분석형) ---
+# --- TAB 3: 악보집 신규 연동 (오타 교정 완료 부) ---
 with tabs[2]:
     st.subheader("⚙️ 시스템 악보집 데이터베이스 추가 등록")
     with st.form("songbook_register_form", clear_on_submit=True):
-        book_name = st.st.text_input("악보집 이름 명칭", placeholder="예: 중앙성가45")
+        # 💡 [오타 수정 완료] st.st.text_input -> st.text_input으로 완벽 교정
+        book_name = st.text_input("악보집 이름 명칭", placeholder="예: 중앙성가45")
         book_url = st.text_input("악보집 전체 곡 목록 HTML 주소", placeholder="https://joongangart.kr/joongang45/joongang45.html")
         reg_btn = st.form_submit_button("신규 악보집 연동 및 분석 실행")
         
@@ -286,8 +279,6 @@ with tabs[0]:
     else:
         selected_book = st.selectbox("📚 대상 악보집 선택", list(st.session_state.songbooks.keys()))
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
-        
-        # 동적으로 새로 수집된 성가집의 '일련번호. 곡명' 목록이 정상 출력됩니다.
         selected_song = st.selectbox("🎶 등록할 곡 선택 (풀다운)", song_options)
         
         corresponding_html_link = st.session_state.songbooks[selected_book][selected_song]
@@ -372,13 +363,11 @@ else:
                 
                 cols = st.columns(3)
                 idx_c = 0
-                has_any_link = False
                 
                 for playlist_name, yt_url in s_data["parts"].items():
                     with cols[idx_c % 3]:
                         st.markdown(f"**📍 타겟 플레이리스트: `{playlist_name}`**")
                         if yt_url:
-                            has_any_link = True
                             st.code(yt_url, language="text")
                             st.video(yt_url)
                         else:
