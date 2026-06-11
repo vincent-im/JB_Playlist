@@ -39,12 +39,12 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 악보집 리스트 수집 엔진 (★느슨하고 강력한 정규식으로 33곡 전수 수집)
+# 2. 🔍 악보집 리스트 수집 엔진 (★태그 순회 방식으로 01~33번 전수 수집)
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    중앙성가 페이지 내 텍스트의 특성에 구애받지 않고,
-    넘버링(01~33번 등) 규칙만 맞으면 무조건 100% 목록으로 추출해냅니다.
+    중앙성가 목차 페이지의 HTML 태그들을 직접 순회하며
+    앞에 번호(숫자)가 붙은 모든 곡들을 누락 없이 100% 잡아내어 풀다운 메뉴에 등록합니다.
     """
     songs_db = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -64,33 +64,38 @@ def extract_songs_from_joongang(songbook_url):
         else:
             clean_base_dir = songbook_url.rsplit('/', 1)[0] + '/'
 
-        # 전체 텍스트 소스 평탄화
-        entire_text = soup.get_text(separator=" ")
-        flat_text = re.sub(r'\s+', ' ', entire_text).replace('\xa0', ' ').strip()
+        # 💡 [핵심 교체] 테이블 셀(td) 및 링크(a), 일반 텍스트 단위를 전수 조사
+        # 테이블 구조 안에서 분절된 "숫자 + 제목"을 정확하게 캐치합니다.
+        elements = soup.find_all(['td', 'a', 'p', 'span'])
         
-        # 💡 [정밀 수정] 텍스트 내부에서 "숫자. 곡제목" 패턴을 매우 유연하게 매칭 (노이즈 필터 완전 제거)
-        matches = re.findall(r'(\d+)\.\s*([^\d\.\s][^\|\<\>\(\)\:\n\t]+)', flat_text)
-        
-        for match in matches:
-            song_num = match[0].zfill(2)
-            raw_title = match[1].strip()
+        for elem in elements:
+            text = elem.get_text().strip()
+            # 공백 및 깨진 문자 정제
+            text = re.sub(r'\s+', ' ', text).replace('\xa0', ' ')
             
-            # 우측의 불필요한 시스템 버튼 텍스트만 깔끔하게 절단
-            clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트)', raw_title, flags=re.IGNORECASE)[0].strip()
-            clean_title = re.sub(r'[\s\-_:=+]+$', '', clean_title).strip()
-            
-            # 2글자 이상인 유효한 텍스트는 필터링 없이 무조건 적재 (01~33 전수 수집 방어선)
-            if len(clean_title) >= 2:
-                full_display_name = f"{song_num}. {clean_title}"
-                songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
+            # 패턴: 문자열이 '숫자(1~2자리)'로 시작하고 뒤에 문자가 이어지는 경우
+            # 예: "01. 구주와 함께 나 살았으니", "15 파송의 노래" 등 모두 매칭
+            match = re.match(r'^(\d+)[.\s]*(.+)$', text)
+            if match:
+                song_num = match.group(1).zfill(2)
+                raw_title = match.group(2).strip()
                 
+                # 우측의 불필요한 기능성 버튼 텍스트 정밀 절단
+                clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트|국외|듣기|wma|mp3)', raw_title, flags=re.IGNORECASE)[0].strip()
+                clean_title = re.sub(r'[\s\-_:=+.,/]+$', '', clean_title).strip()
+                
+                # 유효한 제목 길이 조건 만족 시 딕셔너리에 적재 (중복은 자연스럽게 덮어씀)
+                if len(clean_title) >= 2 and not clean_title.isdigit():
+                    full_display_name = f"{song_num}. {clean_title}"
+                    songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
+                    
         return songs_db
     except Exception as e:
         st.error(f"❌ 악보집 파싱 중 치명적 오류 발생: {e}")
         return None
 
 # ------------------------------------------------------------------
-# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기
+# 3. 🛠️ iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기 (기존 정상 기능)
 # ------------------------------------------------------------------
 def extract_video_id_powerful(text_content):
     patterns = [
@@ -174,7 +179,7 @@ def deep_extract_youtube_urls(main_html_url):
         return None
 
 # ------------------------------------------------------------------
-# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈
+# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (기존 정상 기능)
 # ------------------------------------------------------------------
 def get_youtube_service():
     if not HAS_GOOGLE_LIB:
