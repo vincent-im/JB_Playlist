@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import re
 from urllib.parse import urljoin, urlparse
 from streamlit_sortables import sort_items
+import time
 
 try:
     from google.oauth2.credentials import Credentials
@@ -38,58 +39,22 @@ PART_MAPPING = {
     "반주": "Test(반주)"
 }
 
-# 💡 [중앙성가 48집 마스터 곡 목록 정밀 대조 데이터셋 수립]
-# 크롤러가 차단당하거나 먹통이 되더라도 실제 곡 제목을 완벽한 형식으로 출력하도록 고정 정의합니다.
-JOONGANG_48_MASTER_SONGS = {
-    "01": "나의 힘이 되신 주님",
-    "02": "내 주가 주신 이 노래는",
-    "03": "믿음의 고백",
-    "04": "그 사랑 넓고 크도다",
-    "05": "감사함으로 그 문에 들어가며",
-    "06": "기뻐하라 주님의 날",
-    "07": "주의 친절한 팔에 안기세",
-    "08": "주님은 나의 목자",
-    "09": "하나님께 찬양",
-    "10": "오 신실하신 주",
-    "11": "참 좋으신 주님",
-    "12": "주 예수보다 더 귀한 것은 없네",
-    "13": "언제나 바라보아도",
-    "14": "감사로 제사를 드리는 자가",
-    "15": "주의 선하심과 인자하심이",
-    "16": "어찌 그리 아름다운지",
-    "17": "시편 23편",
-    "18": "은혜의 강가로",
-    "19": "내 영혼이 은총 입어",
-    "20": "기뻐하며 왕께 노래 부르세",
-    "21": "평화의 기도",
-    "22": "구주를 생각만 해도",
-    "23": "주와 함께 가리라",
-    "24": "너의 하나님 여호와가",
-    "25": "기쁜 소리 들리니",
-    "26": "주 안에 하나 되라",
-    "27": "하나님은 우리의 피난처시니",
-    "28": "주 예수 내 맘에 들어와 계신 후",
-    "29": "선한 목자 되신 우리 주",
-    "30": "주님 나라 이루게 하소서",
-    "31": "여호와는 위대하시니",
-    "32": "입례송 (기뻐하며 경배하세)",
-    "33": "축도송"
-}
-
 # ------------------------------------------------------------------
-# 2. 🔍 [🚨 곡명 전수 매핑 패치] 악보집 리스트 수집 엔진
+# 2. 🔍 [🚨 고정 데이터 제거 / 완전 동적 파싱 전환] 악보집 리스트 수집 엔진
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    웹 크롤링을 수행하되, 서버 트래픽 제한이나 차단으로 데이터 누락이 감지되면
-    미리 정의된 정밀 마스터 곡 목록을 바탕으로 '일련번호. 곡명' 형식을 강제 완성합니다.
+    특정 성가집 고정 데이터를 배제하고, 입력된 임의의 중앙성가 목차 URL을 실시간 분석하여
+    해당 악보집에 수록된 '일련번호. 곡명' 전수를 동적으로 바인딩합니다.
     """
     songs_db = {}
+    
+    # 봇 차단을 회피하기 위한 모바일/데스크톱 혼합형 크롤링 헤더 세팅
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     }
     
-    # 베이스 디렉토리 정제
+    # 베이스 디렉토리 정제 (예: .../joongang45/, .../joongang48/)
     parsed_url = urlparse(songbook_url)
     path_parts = [p for p in parsed_url.path.split('/') if p]
     if path_parts:
@@ -97,45 +62,63 @@ def extract_songs_from_joongang(songbook_url):
     else:
         clean_base_dir = songbook_url.rsplit('/', 1)[0] + '/'
 
-    # 1차 분해 기동: 실시간 크롤링 및 파싱 시도
     try:
-        response = requests.get(songbook_url, headers=headers, timeout=6)
+        # 단시간 연타로 인한 차단을 방지하기 위해 0.3초 미세 대기 주입
+        time.sleep(0.3)
+        response = requests.get(songbook_url, headers=headers, timeout=10)
+        
         if response.status_code == 200:
             response.encoding = response.apparent_encoding
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # 💡 [핵심 복구] 모든 테이블 셀(td)을 전수 조사하여 각 성가집의 실제 곡명을 동적 스캔합니다.
             td_cells = soup.find_all('td')
+            
             for cell in td_cells:
                 cell_text = cell.get_text().strip()
+                # 줄바꿈 및 특수 공백 제거 평탄화
                 cell_text_clean = re.sub(r'\s+', ' ', cell_text).replace('\xa0', ' ').strip()
                 
+                # '숫자(1~2자리) + 마침표(.) + 명칭' 구조 찾아내기
                 match = re.match(r'^(\d+)\.\s*(.+)$', cell_text_clean)
                 if match:
-                    song_num = match.group(1).zfill(2)
+                    song_num = match.group(1).zfill(2) # "01", "02" 형태로 표준화
                     raw_title = match.group(2).strip()
                     
-                    # 우측 컨트롤러 정크 문자 정밀 필터링
+                    # 제목 우측의 시스템 버튼 레이블(play, 보기 등) 유연하게 절단
                     clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트|듣기|wma|mp3)', raw_title, flags=re.IGNORECASE)[0].strip()
                     clean_title = re.sub(r'[\s\-_:=+.,/]+$', '', clean_title).strip()
                     
+                    # 순수 숫자가 아닌 유효한 곡명인 경우에만 세션 DB에 바인딩
                     if len(clean_title) >= 2 and not clean_title.isdigit():
                         full_display_name = f"{song_num}. {clean_title}"
+                        # 해당 성가집 고유 폴더 경로에 맞춰 pop1.html 이동 주소 빌드
                         songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
+                        
     except Exception as e:
-        st.sidebar.info("🤖 안정적인 구동을 위해 로컬 마스터 데이터베이스 변환 백업을 가동합니다.")
+        st.error(f"❌ 악보집 주소 연동 중 네트워크 오류 발생: {e}")
+        return None
 
-    # 💡 [핵심 보완 패치] 수집된 곡이 부족하거나(차단), 글자가 유실된 경우 내장 마스터 셋으로 33곡 전체 강제 복구
-    if len(songs_db) < 30:
-        songs_db.clear() # 중복 방지를 위한 초기화
-        for song_num, song_title in JOONGANG_48_MASTER_SONGS.items():
-            # 사용자가 요청한 완벽한 '일련번호. 곡명' 구조를 구현합니다.
-            full_display_name = f"{song_num}. {song_title}"
-            songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
-            
+    # 만약 정밀 격자 스캔으로 수집에 실패했을 경우를 위한 유연한 텍스트 기반 2차 백업 파싱
+    if not songs_db:
+        try:
+            entire_text = soup.get_text(separator=" ")
+            flat_text = re.sub(r'\s+', ' ', entire_text).replace('\xa0', ' ').strip()
+            matches = re.findall(r'(\d+)\.\s*([^\d\.\s][^\|\<\>\(\)\:\n\t]+)', flat_text)
+            for m in matches:
+                s_num = m[0].zfill(2)
+                r_title = m[1].strip()
+                c_title = re.split(r'(play|보기|클릭|인쇄|다운|파트)', r_title, flags=re.IGNORECASE)[0].strip()
+                c_title = re.sub(r'[\s\-_:=+]+$', '', c_title).strip()
+                if len(c_title) >= 2 and not c_title.isdigit():
+                    songs_db[f"{s_num}. {c_title}"] = f"{clean_base_dir}{s_num}/pop1.html"
+        except:
+            pass
+
     return songs_db
 
 # ------------------------------------------------------------------
-# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기 (기존 보존)
+# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기 (정상 기능 원형 유지)
 # ------------------------------------------------------------------
 def extract_video_id_powerful(text_content):
     patterns = [
@@ -219,7 +202,7 @@ def deep_extract_youtube_urls(main_html_url):
         return None
 
 # ------------------------------------------------------------------
-# 4. 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (기존 보존)
+# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (원형 유지)
 # ------------------------------------------------------------------
 def get_youtube_service():
     if not HAS_GOOGLE_LIB:
@@ -278,22 +261,22 @@ def add_video_to_playlist(youtube, p_id, v_id):
 st.header("🎵 곡 등록 센터")
 tabs = st.tabs(["📂 1. 악보집 풀다운 메뉴 선택 방식", "✍️ 2. 수동 곡명/링크 직접 입력 방식", "⚙️ 악보집 DB 신규 등록"])
 
-# --- TAB 3: 악보집 신규 연동 ---
+# --- TAB 3: 악보집 신규 연동 (완전 동적 분석형) ---
 with tabs[2]:
     st.subheader("⚙️ 시스템 악보집 데이터베이스 추가 등록")
     with st.form("songbook_register_form", clear_on_submit=True):
-        book_name = st.text_input("악보집 이름 명칭", placeholder="예: 중앙성가48")
-        book_url = st.text_input("악보집 전체 곡 목록 HTML 주소", placeholder="https://joongangart.kr/joongang48/joongang48.html")
+        book_name = st.st.text_input("악보집 이름 명칭", placeholder="예: 중앙성가45")
+        book_url = st.text_input("악보집 전체 곡 목록 HTML 주소", placeholder="https://joongangart.kr/joongang45/joongang45.html")
         reg_btn = st.form_submit_button("신규 악보집 연동 및 분석 실행")
         
         if reg_btn and book_name and book_url:
-            with st.spinner("🤖 데이터 파이프라인 정렬 중..."):
+            with st.spinner(f"🤖 지정하신 주소({book_url}) 분석 및 전수 수집 중..."):
                 parsed_songs = extract_songs_from_joongang(book_url)
             if parsed_songs and len(parsed_songs) > 0:
                 st.session_state.songbooks[book_name] = parsed_songs
-                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 정밀 동기화되었습니다. 첫 번째 탭을 확인하세요.")
+                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡 목록이 풀다운 메뉴에 완전 동적 바인딩되었습니다.")
             else:
-                st.error("❌ 주소 형식을 다시 점검해 주세요.")
+                st.error("❌ 곡 목록 파싱에 실패했습니다. 올바른 중앙성가 목차 HTML 주소 규격인지 대조해 주십시오.")
 
 # --- TAB 1: 악보집 풀다운 선택형 등록 ---
 with tabs[0]:
@@ -304,7 +287,7 @@ with tabs[0]:
         selected_book = st.selectbox("📚 대상 악보집 선택", list(st.session_state.songbooks.keys()))
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
         
-        # 🎯 [요청 즉각 반영] 풀다운 메뉴에 원래 악보집과 동일한 '일련번호. 곡명'이 깔끔하게 표시됩니다.
+        # 동적으로 새로 수집된 성가집의 '일련번호. 곡명' 목록이 정상 출력됩니다.
         selected_song = st.selectbox("🎶 등록할 곡 선택 (풀다운)", song_options)
         
         corresponding_html_link = st.session_state.songbooks[selected_book][selected_song]
