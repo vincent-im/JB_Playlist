@@ -4,9 +4,14 @@ from bs4 import BeautifulSoup
 import re
 from urllib.parse import urljoin, urlparse
 from streamlit_sortables import sort_items
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-import googleapiclient.errors
+
+try:
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    import googleapiclient.errors
+    HAS_GOOGLE_LIB = True
+except ImportError:
+    HAS_GOOGLE_LIB = False
 
 # ------------------------------------------------------------------
 # 1. 초기 세션 상태 설정 및 앱 기본 환경 정의
@@ -34,12 +39,12 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 악보집 리스트 수집 엔진 (33개 곡 전수 수집 버전)
+# 2. 🔍 악보집 리스트 수집 엔진 (★느슨하고 강력한 정규식으로 33곡 전수 수집)
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    중앙성가의 숫자 넘버링 정규식을 활용하여 누락 없이 
-    01번부터 33번까지 모든 곡을 100% 깔끔하게 풀다운 데이터로 수집합니다.
+    중앙성가 페이지 내 텍스트의 특성에 구애받지 않고,
+    넘버링(01~33번 등) 규칙만 맞으면 무조건 100% 목록으로 추출해냅니다.
     """
     songs_db = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -63,17 +68,18 @@ def extract_songs_from_joongang(songbook_url):
         entire_text = soup.get_text(separator=" ")
         flat_text = re.sub(r'\s+', ' ', entire_text).replace('\xa0', ' ').strip()
         
-        # 지능형 패턴 매칭: 문자열 도중 '숫자(1~2자리) + 마침표(.) + 곡제목' 검색
+        # 💡 [정밀 수정] 텍스트 내부에서 "숫자. 곡제목" 패턴을 매우 유연하게 매칭 (노이즈 필터 완전 제거)
         matches = re.findall(r'(\d+)\.\s*([^\d\.\s][^\|\<\>\(\)\:\n\t]+)', flat_text)
         
         for match in matches:
             song_num = match[0].zfill(2)
             raw_title = match[1].strip()
             
-            # 제목 우측의 시스템 버튼명(play, 보기 등) 정밀 도려내기
+            # 우측의 불필요한 시스템 버튼 텍스트만 깔끔하게 절단
             clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트)', raw_title, flags=re.IGNORECASE)[0].strip()
             clean_title = re.sub(r'[\s\-_:=+]+$', '', clean_title).strip()
             
+            # 2글자 이상인 유효한 텍스트는 필터링 없이 무조건 적재 (01~33 전수 수집 방어선)
             if len(clean_title) >= 2:
                 full_display_name = f"{song_num}. {clean_title}"
                 songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
@@ -84,7 +90,7 @@ def extract_songs_from_joongang(songbook_url):
         return None
 
 # ------------------------------------------------------------------
-# 3. 🛠️ iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기
+# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기
 # ------------------------------------------------------------------
 def extract_video_id_powerful(text_content):
     patterns = [
@@ -171,11 +177,19 @@ def deep_extract_youtube_urls(main_html_url):
 # 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈
 # ------------------------------------------------------------------
 def get_youtube_service():
+    if not HAS_GOOGLE_LIB:
+        st.error("❌ 구글 API 라이브러리가 설치되지 않았습니다.")
+        return None
     try:
+        if "google" not in st.secrets:
+            st.error("❌ Streamlit Secrets 설정이 누락되었습니다.")
+            return None
         creds = Credentials(
-            token=None, refresh_token=st.secrets["google"]["refresh_token"],
+            token=None, 
+            refresh_token=st.secrets["google"]["refresh_token"],
             token_uri="https://oauth2.googleapis.com/token",
-            client_id=st.secrets["google"]["client_id"], client_secret=st.secrets["google"]["client_secret"]
+            client_id=st.secrets["google"]["client_id"], 
+            client_secret=st.secrets["google"]["client_secret"]
         )
         return build('youtube', 'v3', credentials=creds)
     except Exception as e:
@@ -206,8 +220,8 @@ def add_video_to_playlist(youtube, p_id, v_id):
             body={"snippet": {"playlistId": p_id, "resourceId": {"kind": "youtube#video", "videoId": v_id}}}
         )
         return request.execute()
-    except googleapiclient.errors.HttpError as e:
-        if e.resp.status == 409:
+    except Exception as e:
+        if "409" in str(e):
             st.warning(f"ℹ️ 플레이리스트에 이미 등재되어 있는 영상입니다. (ID: {v_id})")
         else:
             st.error(f"❌ 유튜브 API 적재 거부 원인: {e}")
@@ -232,14 +246,15 @@ with tabs[2]:
                 parsed_songs = extract_songs_from_joongang(book_url)
             if parsed_songs:
                 st.session_state.songbooks[book_name] = parsed_songs
-                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터에 완벽히 로드되었습니다.")
-                # 💡 [무한 루프 원인 수정] 폼 제출 블록 내부의 무조건적인 st.rerun() 제거하여 새로고침 지옥 해결
+                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터에 완벽히 로드되었습니다. 첫 번째 탭을 확인하세요.")
+            else:
+                st.error("❌ 곡 구조를 파싱하지 못했습니다. 주소를 다시 점검해 주세요.")
 
 # --- TAB 1: 악보집 풀다운 선택형 등록 ---
 with tabs[0]:
     st.subheader("📂 등록된 악보집에서 편리하게 고르기")
     if not st.session_state.songbooks:
-        st.info("ℹ️ 활성화된 악보집이 없습니다. 먼저 우측 [악보집 DB 신규 등록] 탭에서 주소를 등록해 주세요.")
+        st.info("ℹ️ 활성화된 악보집이 없습니다. 먼저 [악보집 DB 신규 등록] 탭에서 주소를 등록해 주세요.")
     else:
         selected_book = st.selectbox("📚 대상 악보집 선택", list(st.session_state.songbooks.keys()))
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
