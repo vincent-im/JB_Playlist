@@ -19,7 +19,7 @@ except ImportError:
 # ------------------------------------------------------------------
 st.set_page_config(page_title="예본성가대 Playlist 생성", layout="wide")
 
-# 1. 대제목 명칭 변경 및 폰트 사이즈 축소 (H2 -> H4 수준)
+# 대제목 명칭 및 폰트 사이즈 유지 (H4 수준)
 st.markdown("#### 🎼 예본성가대 Playlist 생성")
 st.caption("유튜브 ID: vincent.jbim@gmail.com")
 
@@ -143,16 +143,16 @@ def add_video_to_playlist(youtube, p_id, v_id):
 # ------------------------------------------------------------------
 st.divider()
 
-# 2. '곡 등록' 폰트 사이즈 축소 (H3 -> H5 수준)
-st.markdown("##### 🎵 곡 등록")
+# '곡 등록' 타이틀을 H4 수준으로 변경
+st.markdown("#### 🎵 곡 등록")
 
-# 3. 탭 메뉴 명칭 변경
+# 탭 메뉴 구성
 tabs = st.tabs(["📂 악보집에서 선택", "✍️ 수동 입력", "⚙️ 악보집 신규 등록"])
 
 # --- TAB 1: 악보집에서 선택 ---
 with tabs[0]:
-    # 2, 4. '악보집에서 선택' 폰트 사이즈 축소
-    st.markdown("<p style='font-size:15px; font-weight:bold; margin-bottom:5px;'>📂 악보집에서 선택</p>", unsafe_allow_html=True)
+    # 내부 제목을 H4(####) 크기로 통일
+    st.markdown("#### 📂 악보집에서 선택")
     if not st.session_state.songbooks:
         st.info("ℹ️ 활성화된 악보집이 없습니다. '악보집 신규 등록' 탭에서 먼저 등록해 주세요.")
     else:
@@ -160,7 +160,6 @@ with tabs[0]:
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
         selected_song = st.selectbox("🎶 등록할 곡 선택 (풀다운)", song_options)
         
-        # 버튼 명칭 변경: '선택한 곡 최종 목록에 추가' -> '선택한 곡 목록에 추가'
         if st.button("🚀 선택한 곡 목록에 추가"):
             clean_title_only = re.sub(r'^\d+[\s\.\-_:\)]+', '', selected_song).strip()
             new_id = max([item["id"] for item in st.session_state.playlist_items]) + 1 if st.session_state.playlist_items else 1
@@ -170,8 +169,8 @@ with tabs[0]:
 
 # --- TAB 2: 수동 입력 ---
 with tabs[1]:
-    # 탭 내부 제목 폰트 사이즈 축소
-    st.markdown("<p style='font-size:15px; font-weight:bold; margin-bottom:5px;'>✍️ 수동 입력</p>", unsafe_allow_html=True)
+    # 내부 제목을 H4(####) 크기로 통일
+    st.markdown("#### ✍️ 수동 입력")
     with st.form(key="manual_add_form", clear_on_submit=True):
         manual_title = st.text_input("곡 명칭 직접 입력")
         manual_url = st.text_input("연결 HTML 주소 직접 입력")
@@ -183,8 +182,8 @@ with tabs[1]:
 
 # --- TAB 3: 악보집 신규 등록 ---
 with tabs[2]:
-    # 탭 내부 제목 폰트 사이즈 축소
-    st.markdown("<p style='font-size:15px; font-weight:bold; margin-bottom:5px;'>⚙️ 악보집 신규 등록</p>", unsafe_allow_html=True)
+    # 내부 제목을 H4(####) 크기로 통일
+    st.markdown("#### ⚙️ 악보집 신규 등록")
     book_name = st.text_input("악보집 이름 (예: 중앙성가48)", key="sb_name_input")
     book_url = st.text_input("악보집 목록 HTML 주소", key="sb_url_input")
     if st.button("신규 악보집 연동 실행", type="primary"):
@@ -198,10 +197,11 @@ with tabs[2]:
             else: st.error("❌ 파싱 실패. 주소를 확인해 주세요.")
 
 # ------------------------------------------------------------------
-# 5, 6. Playlist 등재 목록 및 순서 (제목 수정 및 크기 축소)
+# 5, 6. Playlist 등재 목록 및 순서
 # ------------------------------------------------------------------
 st.divider()
-st.markdown("<p style='font-size:15px; font-weight:bold; margin-bottom:10px;'>📋 Playlist 등재 목록 및 순서</p>", unsafe_allow_html=True)
+# 목록 타이틀을 H4(####) 크기로 통일
+st.markdown("#### 📋 Playlist 등재 목록 및 순서")
 
 if not st.session_state.playlist_items:
     st.warning("현재 대기열에 등록된 곡이 없습니다.")
@@ -224,7 +224,8 @@ else:
 
     # 🚀 최종 가동 섹션
     st.divider()
-    st.subheader("⚙️ 파트별 유튜브 추출 및 등재")
+    # 최종 대분류 타이틀 역시 H4(####) 크기로 매칭하여 통일감 부여
+    st.markdown("#### ⚙️ 파트별 유튜브 추출 및 등재")
     if st.button("🔍 1단계: 파트별 주소 추출하기", use_container_width=True):
         temp_buffer = {}
         for item in st.session_state.playlist_items:
