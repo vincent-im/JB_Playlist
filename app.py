@@ -40,19 +40,19 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 [🚨 특수공백 및 분절태그 완전 파괴] 범용 곡 목록 동적 수집 엔진
+# 2. 🔍 [🚨 곡명 훼손 오인 필터 완전 제거] 범용 곡 목록 동적 수집 엔진
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    HTML 내부의 온갖 지저분한 특수공백(&nbsp;)과 분절 태그들을 완전히 지우고 평탄화하여,
-    어떤 성가집이든 원본 주소에서 01번부터 33번까지의 곡 목록을 100% 동적으로 수집합니다.
+    제목 내부에 포함된 '노래', '성가' 등의 글자가 필터링에 오인되어 삭제되던 버그를 완벽히 해결합니다.
+    문서를 라인(\n) 단위로 분해하여 '일련번호. 곡명' 규격을 전수 수집합니다.
     """
     songs_db = {}
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     }
     
-    # 💡 joongangXX 마스터 폴더를 기준으로 깨끗한 최상위 기반 주소 산출
+    # 기반 주소 체계 자동 산출
     parsed_url = urlparse(songbook_url)
     folder_match = re.search(r'/(joongang\d+)/', parsed_url.path, flags=re.IGNORECASE)
     
@@ -63,41 +63,42 @@ def extract_songs_from_joongang(songbook_url):
         clean_base_dir = songbook_url.rsplit('/', 1)[0] + '/'
 
     try:
-        time.sleep(0.3) # 연타 차단 방지 방어선
+        time.sleep(0.3)
         response = requests.get(songbook_url, headers=headers, timeout=12)
         
         if response.status_code == 200:
             response.encoding = response.apparent_encoding
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 💡 [해결의 핵심]: HTML 가짜 공백문자와 줄바꿈을 전부 털어내고 순수 텍스트 스트림으로 병합
-            raw_text = soup.get_text(separator=" ")
+            # 💡 [알고리즘 대수술]: 모든 줄바꿈 패턴을 유지한 채 순수 텍스트 줄(Line) 단위로 쪼갬
+            raw_text_lines = soup.get_text(separator="\n").split('\n')
             
-            # 유령 공백(\xa0, &nbsp;)과 멀티 스페이스를 모두 일반 표준 스페이스 1칸으로 완벽 대치
-            clean_flat_text = re.sub(r'\s+', ' ', raw_text).replace('\xa0', ' ').strip()
-            
-            # 💡 숫자와 곡명 사이에 태그나 공백이 찢어놓은 틈새를 완전히 연결하여 찾아내는 정규식 가동
-            # 예: "02 . 내 주가 주신 이 노래는" 형태까지 유연하게 전수 검출
-            matches = re.findall(r'(\d+)\s*\.?\s*([^\d\.\s][^\|\<\>\(\)\:\t\n]+)', clean_flat_text)
-            
-            for match in matches:
-                song_num = match[0].zfill(2) # "01", "02" 포맷 표준화
-                raw_title = match[1].strip()
+            for line in raw_text_lines:
+                # 라인 양끝 공백 및 유령 문자 청소
+                line_clean = line.strip().replace('\xa0', ' ')
+                line_clean = re.sub(r'\s+', ' ', line_clean)
                 
-                # 곡 제목 우측의 시스템 기능어(play, 보기, 인쇄 등) 단면 절단 정제
-                clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트|듣기|wma|mp3|가사|성가|중앙|악보)', raw_title, flags=re.IGNORECASE)[0].strip()
-                clean_title = re.sub(r'[\s\-_:=+.,/]+$', '', clean_title).strip()
+                # 💡 진짜 목차 패턴 매칭: 정확히 "숫자(1~2자리) + 마침표(.) + 제목" 구조로 시작하는 줄만 타겟팅
+                match = re.match(r'^(\d+)\.\s*(.+)$', line_clean)
                 
-                # 유효한 문자열 제목인 경우에만 딕셔너리에 동적 적재
-                if len(clean_title) >= 2 and not clean_title.isdigit():
-                    # 정빈님이 요청하신 완벽한 '일련번호. 곡명' 규격 수립
-                    full_display_name = f"{song_num}. {clean_title}"
+                if match:
+                    song_num = match.group(1).zfill(2) # "01", "02" 포맷 규격화
+                    raw_title = match.group(2).strip()
                     
-                    # 성가집 버전별 하위 페이지 경로 자동 분기 (34집 레거시 subXX.html 완벽 대응)
-                    if 'sub' in songbook_url.lower() or '34' in songbook_url:
-                        songs_db[full_display_name] = f"{clean_base_dir}sub{song_num}.html"
-                    else:
-                        songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
+                    # 💡 [버그 해결 핵심]: 곡 제목 안의 '노래' 단어가 다치지 않도록 접미사 정규식으로 우측 버튼 영역만 저격 분리
+                    # 제목 글자가 끝난 뒤 붙어오는 play, 보기, 인쇄 등 시스템 찌꺼기 문자열만 깔끔히 제거
+                    clean_title = re.sub(r'\s*(play|보기|클릭|인쇄|다운|파트|듣기|wma|mp3|가사|뮤직).*$', '', raw_title, flags=re.IGNORECASE).strip()
+                    clean_title = re.sub(r'[\s\-_:=+.,/]+$', '', clean_title).strip()
+                    
+                    # 최종 정제된 제목이 유효할 때 세션 데이터베이스에 등재
+                    if len(clean_title) >= 2 and not clean_title.isdigit():
+                        full_display_name = f"{song_num}. {clean_title}"
+                        
+                        # 성가집 버전별 하위 도달 페이지 링크 동적 분기
+                        if 'sub' in songbook_url.lower() or '34' in songbook_url:
+                            songs_db[full_display_name] = f"{clean_base_dir}sub{song_num}.html"
+                        else:
+                            songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
                             
     except Exception as e:
         st.error(f"❌ 악보집 주소 동적 파싱 연동 중 치명적 오류 발생: {e}")
@@ -106,7 +107,7 @@ def extract_songs_from_joongang(songbook_url):
     return songs_db
 
 # ------------------------------------------------------------------
-# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기 (기존 정상본 보존)
+# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기 (원형 유지)
 # ------------------------------------------------------------------
 def extract_video_id_powerful(text_content):
     patterns = [
@@ -190,7 +191,7 @@ def deep_extract_youtube_urls(main_html_url):
         return None
 
 # ------------------------------------------------------------------
-# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (원형 유지)
+# 4. 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (원형 유지)
 # ------------------------------------------------------------------
 def get_youtube_service():
     if not HAS_GOOGLE_LIB:
@@ -249,7 +250,7 @@ def add_video_to_playlist(youtube, p_id, v_id):
 st.header("🎵 곡 등록 센터")
 tabs = st.tabs(["📂 1. 악보집 풀다운 메뉴 선택 방식", "✍️ 2. 수동 곡명/링크 직접 입력 방식", "⚙️ 악보집 DB 신규 등록"])
 
-# --- TAB 3: 악보집 신규 연동 ---
+# --- TAB 3: 악보집 신규 연동 (라인 지향형 파서 엔진 가동 부) ---
 with tabs[2]:
     st.subheader("⚙️ 시스템 악보집 데이터베이스 추가 등록")
     with st.form("songbook_register_form", clear_on_submit=True):
@@ -258,11 +259,11 @@ with tabs[2]:
         reg_btn = st.form_submit_button("신규 악보집 연동 및 분석 실행")
         
         if reg_btn and book_name and book_url:
-            with st.spinner(f"🤖 특수 문자열 공백 완전 분쇄 및 전수 동적 추출 중..."):
+            with st.spinner(f"🤖 곡명 오인 삭제 필터 제거 버전 가동 중..."):
                 parsed_songs = extract_songs_from_joongang(book_url)
             if parsed_songs and len(parsed_songs) > 0:
                 st.session_state.songbooks[book_name] = parsed_songs
-                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 모든 곡이 '일련번호. 곡명' 규격으로 첫 번째 탭 풀다운 메뉴에 정밀 안착되었습니다.")
+                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 모든 곡이 첫 번째 탭 풀다운 메뉴에 '일련번호. 곡명' 규격으로 완벽하게 수집되었습니다.")
             else:
                 st.error("❌ 곡 목록 파싱에 실패했습니다. 입력하신 마스터 목차 HTML 주소를 다시 점검해 주십시오.")
 
