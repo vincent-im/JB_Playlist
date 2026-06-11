@@ -4,15 +4,9 @@ from bs4 import BeautifulSoup
 import re
 from urllib.parse import urljoin, urlparse
 from streamlit_sortables import sort_items
-
-# google API 라이브러리는 가동 시점에 에러를 뿜지 않도록 안전하게 try-import 처리
-try:
-    from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
-    import googleapiclient.errors
-    HAS_GOOGLE_LIB = True
-except ImportError:
-    HAS_GOOGLE_LIB = False
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+import googleapiclient.errors
 
 # ------------------------------------------------------------------
 # 1. 초기 세션 상태 설정 및 앱 기본 환경 정의
@@ -174,24 +168,14 @@ def deep_extract_youtube_urls(main_html_url):
         return None
 
 # ------------------------------------------------------------------
-# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (지연 로딩형)
+# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈
 # ------------------------------------------------------------------
 def get_youtube_service():
-    """앱 구동 시점에 튕기지 않도록 함수 호출 시에만 안전하게 로드"""
-    if not HAS_GOOGLE_LIB:
-        st.error("❌ 구글 API 라이브러리가requirements.txt에 정상 설치되지 않았습니다.")
-        return None
     try:
-        if "google" not in st.secrets:
-            st.error("❌ Streamlit Cloud 대시보드에 [google] Secrets 키 세팅이 누락되었습니다.")
-            return None
-            
         creds = Credentials(
-            token=None, 
-            refresh_token=st.secrets["google"]["refresh_token"],
+            token=None, refresh_token=st.secrets["google"]["refresh_token"],
             token_uri="https://oauth2.googleapis.com/token",
-            client_id=st.secrets["google"]["client_id"], 
-            client_secret=st.secrets["google"]["client_secret"]
+            client_id=st.secrets["google"]["client_id"], client_secret=st.secrets["google"]["client_secret"]
         )
         return build('youtube', 'v3', credentials=creds)
     except Exception as e:
@@ -222,9 +206,8 @@ def add_video_to_playlist(youtube, p_id, v_id):
             body={"snippet": {"playlistId": p_id, "resourceId": {"kind": "youtube#video", "videoId": v_id}}}
         )
         return request.execute()
-    except Exception as e:
-        # HttpError 처리 유연화
-        if "409" in str(e):
+    except googleapiclient.errors.HttpError as e:
+        if e.resp.status == 409:
             st.warning(f"ℹ️ 플레이리스트에 이미 등재되어 있는 영상입니다. (ID: {v_id})")
         else:
             st.error(f"❌ 유튜브 API 적재 거부 원인: {e}")
@@ -249,15 +232,14 @@ with tabs[2]:
                 parsed_songs = extract_songs_from_joongang(book_url)
             if parsed_songs:
                 st.session_state.songbooks[book_name] = parsed_songs
-                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터에 완벽히 로드되었습니다. 첫 번째 탭을 확인하세요.")
-            else:
-                st.error("❌ 곡 구조를 파싱하지 못했습니다. 주소를 다시 점검해 주세요.")
+                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터에 완벽히 로드되었습니다.")
+                # 💡 [무한 루프 원인 수정] 폼 제출 블록 내부의 무조건적인 st.rerun() 제거하여 새로고침 지옥 해결
 
 # --- TAB 1: 악보집 풀다운 선택형 등록 ---
 with tabs[0]:
     st.subheader("📂 등록된 악보집에서 편리하게 고르기")
     if not st.session_state.songbooks:
-        st.info("ℹ️ 활성화된 악보집이 없습니다. 먼저 [악보집 DB 신규 등록] 탭에서 주소를 등록해 주세요.")
+        st.info("ℹ️ 활성화된 악보집이 없습니다. 먼저 우측 [악보집 DB 신규 등록] 탭에서 주소를 등록해 주세요.")
     else:
         selected_book = st.selectbox("📚 대상 악보집 선택", list(st.session_state.songbooks.keys()))
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
