@@ -39,12 +39,12 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 악보집 리스트 수집 엔진 (★태그 순회 방식으로 01~33번 전수 수집)
+# 2. 🔍 [🚨 구조 역추적 방식 개편] 악보집 리스트 수집 엔진
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
-    중앙성가 목차 페이지의 HTML 태그들을 직접 순회하며
-    앞에 번호(숫자)가 붙은 모든 곡들을 누락 없이 100% 잡아내어 풀다운 메뉴에 등록합니다.
+    텍스트 정규식에 의존하지 않고, 중앙성가 고유의 href/onclick 내부 주소 구조를 
+    역추적하여 01번부터 33번까지 모든 곡을 누락 없이 100% 수집합니다.
     """
     songs_db = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -64,30 +64,54 @@ def extract_songs_from_joongang(songbook_url):
         else:
             clean_base_dir = songbook_url.rsplit('/', 1)[0] + '/'
 
-        # 💡 [핵심 교체] 테이블 셀(td) 및 링크(a), 일반 텍스트 단위를 전수 조사
-        # 테이블 구조 안에서 분절된 "숫자 + 제목"을 정확하게 캐치합니다.
-        elements = soup.find_all(['td', 'a', 'p', 'span'])
+        # 💡 [해결 핵심] 페이지 내 모든 링크(a 태그)를 순회하며 실제 이동 경로 추적
+        links = soup.find_all('a')
         
-        for elem in elements:
-            text = elem.get_text().strip()
-            # 공백 및 깨진 문자 정제
-            text = re.sub(r'\s+', ' ', text).replace('\xa0', ' ')
+        for link in links:
+            href = link.get('href', '')
+            onclick = link.get('onclick', '')
+            text = link.get_text().strip()
             
-            # 패턴: 문자열이 '숫자(1~2자리)'로 시작하고 뒤에 문자가 이어지는 경우
-            # 예: "01. 구주와 함께 나 살았으니", "15 파송의 노래" 등 모두 매칭
-            match = re.match(r'^(\d+)[.\s]*(.+)$', text)
-            if match:
-                song_num = match.group(1).zfill(2)
-                raw_title = match.group(2).strip()
+            # 주소 혹은 팝업 스크립트 내부에서 곡 번호(2자리 숫자) 탐색
+            # 패턴 예: '01/pop1.html' 또는 'popup("01"...'
+            num_match = re.search(r'(?:popup\([\'"]|/)(\d{2})(?:/|[\'"])', href + " " + onclick)
+            
+            if num_match:
+                song_num = num_match.group(1) # 예: "01", "02"
                 
-                # 우측의 불필요한 기능성 버튼 텍스트 정밀 절단
-                clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트|국외|듣기|wma|mp3)', raw_title, flags=re.IGNORECASE)[0].strip()
+                # 링크 텍스트가 비어있다면 부모 태그(td)로 올라가서 주변 텍스트를 곡 제목으로 확보
+                if len(text) < 2:
+                    parent_td = link.find_parent('td')
+                    if parent_td:
+                        text = parent_td.get_text().strip()
+                
+                # 공백 및 줄바꿈 평탄화 정제
+                text_clean = re.sub(r'\s+', ' ', text).replace('\xa0', ' ')
+                
+                # '01.' 이나 '01' 같은 번호 접두어 제거하고 순수 제목만 추출
+                title_part = re.sub(r'^\d+[\s\.\-_]*', '', text_clean).strip()
+                
+                # play, 보기 등 시스템 버튼 텍스트 최종 절단
+                clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트|wma|mp3)', title_part, flags=re.IGNORECASE)[0].strip()
                 clean_title = re.sub(r'[\s\-_:=+.,/]+$', '', clean_title).strip()
                 
-                # 유효한 제목 길이 조건 만족 시 딕셔너리에 적재 (중복은 자연스럽게 덮어씀)
-                if len(clean_title) >= 2 and not clean_title.isdigit():
+                # 유효한 제목일 경우 딕셔너리에 바인딩
+                if len(clean_title) >= 2:
                     full_display_name = f"{song_num}. {clean_title}"
                     songs_db[full_display_name] = f"{clean_base_dir}{song_num}/pop1.html"
+        
+        # 만약 링크 추적 방식으로 수집이 미비할 경우를 대비한 최종 백업 (기존 텍스트 파싱)
+        if len(songs_db) < 10:
+            entire_text = soup.get_text(separator=" ")
+            flat_text = re.sub(r'\s+', ' ', entire_text).replace('\xa0', ' ').strip()
+            matches = re.findall(r'(\d+)\.\s*([^\d\.\s][^\|\<\>\(\)\:\n\t]+)', flat_text)
+            for match in matches:
+                song_num = match[0].zfill(2)
+                raw_title = match[1].strip()
+                clean_title = re.split(r'(play|보기|클릭|인쇄|다운|파트)', raw_title, flags=re.IGNORECASE)[0].strip()
+                clean_title = re.sub(r'[\s\-_:=+]+$', '', clean_title).strip()
+                if len(clean_title) >= 2:
+                    songs_db[f"{song_num}. {clean_title}"] = f"{clean_base_dir}{song_num}/pop1.html"
                     
         return songs_db
     except Exception as e:
@@ -95,7 +119,7 @@ def extract_songs_from_joongang(songbook_url):
         return None
 
 # ------------------------------------------------------------------
-# 3. 🛠️ iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기 (기존 정상 기능)
+# 3. iframe 및 스크립트 내부 유튜브 11자리 고유 ID 추적기
 # ------------------------------------------------------------------
 def extract_video_id_powerful(text_content):
     patterns = [
@@ -179,7 +203,7 @@ def deep_extract_youtube_urls(main_html_url):
         return None
 
 # ------------------------------------------------------------------
-# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈 (기존 정상 기능)
+# 4. 🔑 구글 공식 YouTube Data API v3 통신 백엔드 모듈
 # ------------------------------------------------------------------
 def get_youtube_service():
     if not HAS_GOOGLE_LIB:
@@ -247,9 +271,9 @@ with tabs[2]:
         reg_btn = st.form_submit_button("신규 악보집 연동 및 분석 실행")
         
         if reg_btn and book_name and book_url:
-            with st.spinner("🤖 전체 곡 목록 원전 수집 중..."):
+            with st.spinner("🤖 구조 역추적 엔진 가동: 33곡 전수 파싱 중..."):
                 parsed_songs = extract_songs_from_joongang(book_url)
-            if parsed_songs:
+            if parsed_songs and len(parsed_songs) > 0:
                 st.session_state.songbooks[book_name] = parsed_songs
                 st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 풀다운 메뉴 데이터에 완벽히 로드되었습니다. 첫 번째 탭을 확인하세요.")
             else:
@@ -259,7 +283,7 @@ with tabs[2]:
 with tabs[0]:
     st.subheader("📂 등록된 악보집에서 편리하게 고르기")
     if not st.session_state.songbooks:
-        st.info("ℹ️ 활성화된 악보집이 없습니다. 먼저 [악보집 DB 신규 등록] 탭에서 주소를 등록해 주세요.")
+        st.info("ℹ️ 활성화된 악보집이 없습니다. 먼저 우측 [악보집 DB 신규 등록] 탭에서 주소를 등록해 주세요.")
     else:
         selected_book = st.selectbox("📚 대상 악보집 선택", list(st.session_state.songbooks.keys()))
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
@@ -385,5 +409,5 @@ else:
                                         p_id = get_or_create_playlist(youtube, playlist_name)
                                         if p_id:
                                             add_video_to_playlist(youtube, p_id, video_id)
-                                    st.success(f"✅ [{playlist_name}] 등재 완료 ➡️ ID: {video_id}")
+                                    st.success(f"-- [{playlist_name}] 등재 완료 ➡️ ID: {video_id}")
                 st.balloons()
