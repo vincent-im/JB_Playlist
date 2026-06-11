@@ -19,7 +19,6 @@ except ImportError:
 # ------------------------------------------------------------------
 st.set_page_config(page_title="예본성가대 Playlist 생성 에이전트", layout="wide")
 
-# 대제목 폰트 축소 및 명칭 변경 반영
 st.markdown("## 🎼 예본성가대 Playlist 생성 에이전트")
 st.caption("유튜브 ID: vincent.jbim@gmail.com")
 
@@ -237,7 +236,6 @@ def add_video_to_playlist(youtube, p_id, v_id):
 # 5. 사용자 인터페이스 (UI) 구현부
 # ------------------------------------------------------------------
 st.divider()
-# 중간 제목 축소 명칭 반영
 st.markdown("### 🎵 곡 등록")
 
 # 세부 메뉴 탭 구조 정의
@@ -278,23 +276,25 @@ with tabs[1]:
 # --- TAB 3: 악보집 신규 등록 ---
 with tabs[2]:
     st.markdown("#### ⚙️ 악보집 신규 등록")
-    with st.form("songbook_register_form", clear_on_submit=True):
-        # 💡 [🚨 핵심 버그 교정 부]: st.st.text_input의 중복 오타를 st.text_input으로 완벽히 정정하여 데이터 유실 차단
-        book_name = st.text_input("악보집 이름 (예: 중앙성가48)")
-        book_url = st.text_input("악보집 목록 HTML 주소")
-        reg_btn = st.form_submit_button("신규 악보집 연동 실행")
-        
-        if reg_btn and book_name and book_url:
-            with st.spinner(f"🤖 {book_name} 분석 중..."):
-                parsed_songs = extract_songs_from_joongang(book_url)
-            if parsed_songs and len(parsed_songs) > 0:
-                st.session_state.songbooks[book_name] = parsed_songs
-                st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 등록되었습니다.")
-            else:
-                st.error("❌ 곡 목록 파싱에 실패했습니다. 주소 규격을 확인해 주세요.")
+    # 💡 [🚨 휘발 버그 해결 핵심]: 데이터 차단의 주원인인 st.form 서밋 방식을 과감히 해제하고 독립 컴포넌트로 재배치
+    book_name = st.text_input("악보집 이름 (예: 중앙성가48)", key="sb_name_input")
+    book_url = st.text_input("악보집 목록 HTML 주소", key="sb_url_input")
+    reg_btn = st.button("신규 악보집 연동 실행", type="primary")
+    
+    if reg_btn and book_name and book_url:
+        with st.spinner(f"🤖 {book_name} 분석 중..."):
+            parsed_songs = extract_songs_from_joongang(book_url)
+        if parsed_songs and len(parsed_songs) > 0:
+            st.session_state.songbooks[book_name] = parsed_songs
+            st.success(f"✅ '{book_name}' 연동 성공! 총 {len(parsed_songs)}개의 곡이 등록되었습니다.")
+            time.sleep(1)
+            # 💡 연동 즉시 화면 전체 세션을 영구 동기화 리런하여 첫 번째 탭으로 데이터 즉각 바인딩
+            st.rerun()
+        else:
+            st.error("❌ 곡 목록 파싱에 실패했습니다. 주소 규격을 확인해 주세요.")
 
 # ------------------------------------------------------------------
-# 6. Playlist 등재 목록 및 순서 조정 구역 (제목 축소 명칭 반영)
+# 6. Playlist 등재 목록 및 순서 조정 구역
 # ------------------------------------------------------------------
 st.divider()
 st.markdown("#### 📋 Playlist 등재 목록 및 순서")
@@ -366,7 +366,7 @@ else:
                 st.markdown("---")
 
         # ------------------------------------------------------------------
-        # 8. 🚀 2단계: 플레이리스트 최종 업로드
+        # 8. 🚀 2단계: 플레이리스트 최종 Upload
         # ------------------------------------------------------------------
         st.subheader("🚀 2단계: 플레이리스트 최종 업로드")
         if st.button("🚀 검증 완료 - 유튜브 플레이리스트에 최종 등재", type="primary", use_container_width=True):
