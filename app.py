@@ -138,10 +138,8 @@ def add_video_to_playlist(youtube, p_id, v_id):
     except: pass
 
 # ------------------------------------------------------------------
-# 4. UI 렌더링 파트
+# 4. UI 렌더링 파트 (Playlist 편집)
 # ------------------------------------------------------------------
-
-# 💡 [요청 사항 1]: 'Playlist 편집' 제목 추가 및 폰트 축소 동기화
 st.markdown("##### 📝 Playlist 편집")
 st.caption("📍 타겟 마스터 기준 리스트: vincent.jbim@gmail.com ➡️ `Test(합창)`")
 
@@ -162,7 +160,6 @@ if "drag_dropped_action" in st.query_params:
     
     elif action_type == "delete":
         del_target_id = action_data.get("id")
-        # 💡 [요청 사항]: 제거 시 대기열 목록 및 6개 파트 추출 버퍼 세션 데이터베이스에서 영구 동시 삭제
         filtered_items = [item for item in st.session_state.playlist_items if str(item["id"]) != str(del_target_id)]
         for item in st.session_state.playlist_items:
             if str(item["id"]) == str(del_target_id):
@@ -173,11 +170,10 @@ if "drag_dropped_action" in st.query_params:
     st.query_params.clear()
     st.rerun()
 
-# HTML5 Advanced Drag & Drop 컴포넌트 빌드
 if not st.session_state.playlist_items:
     st.info("현재 대기열에 등록된 곡이 없습니다. 아래 '곡 등록'에서 곡을 추가해 주세요.")
 else:
-    # 정빈님이 요청하신 '곡명 앞 3줄(☰) 핸들' 및 '하단 드래그앤드롭 전용 휴지통 마크' 가동
+    # 💡 순수 HTML 아이템 동적 조립
     list_items_html = ""
     for item in st.session_state.playlist_items:
         list_items_html += f"""
@@ -188,10 +184,10 @@ else:
         </div>
         """
 
-    drag_drop_script = f"""
+    # 💡 [🚨 SyntaxError 근본 해결 패치]: f-string 구조를 포기하고 중괄호 충돌이 없는 raw string 구조로 변경
+    drag_drop_script = r"""
     <div id="drag-sort-container" style="max-width: 100%; font-family: sans-serif;">
-        {list_items_html}
-        
+    """ + list_items_html + r"""
         <div id="playlist-trash-zone" style="margin-top: 15px; padding: 20px; border: 2px dashed #ff4b4b; background-color: #fff5f5; border-radius: 6px; text-align: center; transition: all 0.2s ease;">
             <span style="font-size: 24px;">🗑️</span>
             <p style="font-size: 13px; color: #ff4b4b; font-weight: bold; margin: 5px 0 0 0;">여기로 곡을 끌어다 놓으면(Drag & Drop) 6개 파트 전체 플레이리스트에서 영구 삭제됩니다.</p>
@@ -203,95 +199,92 @@ else:
         const trashZone = document.getElementById('playlist-trash-zone');
         let draggedItem = null;
 
-        container.addEventListener('dragstart', (e) => {{
+        container.addEventListener('dragstart', (e) => {
             draggedItem = e.target.closest('.draggable-song-item');
-            if (draggedItem) {{
+            if (draggedItem) {
                 e.dataTransfer.setData('text/plain', draggedItem.getAttribute('data-id'));
                 draggedItem.style.opacity = '0.5';
-            }}
-        }});
+            }
+        });
 
-        container.addEventListener('dragend', (e) => {{
-            if (draggedItem) {{
+        container.addEventListener('dragend', (e) => {
+            if (draggedItem) {
                 draggedItem.style.opacity = '1';
-            }}
+            }
             trashZone.style.backgroundColor = '#fff5f5';
             trashZone.style.borderWidth = '2px';
-        }});
+        });
 
-        container.addEventListener('dragover', (e) => {{
+        container.addEventListener('dragover', (e) => {
             e.preventDefault();
             const afterElement = getDragAfterElement(container, e.clientY);
             const currentDragged = document.querySelector('.draggable-song-item[style*="opacity: 0.5"]');
-            if (currentDragged && e.target.closest('.draggable-song-item') && e.target.closest('#playlist-trash-zone') === null) {{
-                if (afterElement == null) {{
+            if (currentDragged && e.target.closest('.draggable-song-item') && e.target.closest('#playlist-trash-zone') === null) {
+                if (afterElement == null) {
                     container.insertBefore(currentDragged, trashZone);
-                }} else {{
+                } else {
                     container.insertBefore(currentDragged, afterElement);
-                }}
-            }}
-        }});
+                }
+            }
+        });
 
-        container.addEventListener('drop', (e) => {{
+        container.addEventListener('drop', (e) => {
             e.preventDefault();
             if (!draggedItem) return;
             
-            // 정렬 순서값 계산 데이터 취합
             const currentItems = container.querySelectorAll('.draggable-song-item');
             const newOrder = [];
-            currentItems.forEach(item => {{
+            currentItems.forEach(item => {
                 newOrder.push(item.getAttribute('data-id'));
-            }});
+            });
             
-            const data = {{ type: 'reorder', order: newOrder }};
-            window.parent.postMessage({{
-                st streamlit: 'query_params',
-                value: {{ drag_dropped_action: JSON.stringify(data) }}
-            }}, '*');
-        }});
+            const data = { type: 'reorder', order: newOrder };
+            const parentOrigin = window.location.origin;
+            window.parent.postMessage({
+                type: 'streamlit:set_query_params',
+                queryParams: { drag_dropped_action: JSON.stringify(data) }
+            }, '*');
+        });
 
-        // 휴지통 전용 Drag 이벤트 핸들러
-        trashZone.addEventListener('dragenter', (e) => {{
+        trashZone.addEventListener('dragenter', (e) => {
             e.preventDefault();
             trashZone.style.backgroundColor = '#ffe3e3';
             trashZone.style.borderWidth = '3px';
-        }});
+        });
 
-        trashZone.addEventListener('dragover', (e) => {{
+        trashZone.addEventListener('dragover', (e) => {
             e.preventDefault();
-        }});
+        });
 
-        trashZone.addEventListener('dragleave', () => {{
+        trashZone.addEventListener('dragleave', () => {
             trashZone.style.backgroundColor = '#fff5f5';
             trashZone.style.borderWidth = '2px';
-        }});
+        });
 
-        trashZone.addEventListener('drop', (e) => {{
+        trashZone.addEventListener('drop', (e) => {
             e.preventDefault();
             const itemId = e.dataTransfer.getData('text/plain');
-            if (itemId) {{
-                const data = {{ type: 'delete', id: itemId }};
-                // Streamlit 상위 캐시 엔진으로 다이렉트 쿼리 전송 브릿지 가동
-                const parentOrigin = window.location.origin;
-                window.parent.postMessage({{
+            if (itemId) {
+                const data = { type: 'delete', id: itemId };
+                window.parent.postMessage({
                     type: 'streamlit:set_query_params',
-                    queryParams: {{ drag_dropped_action: JSON.stringify(data) }}
-                }}, '*');
-            }}
-        }});
+                    queryParams: { drag_dropped_action: JSON.stringify(data) }
+                }, '*');
+            }
+        });
 
-        function getDragAfterElement(container, y) {{
+        function getDragAfterElement(container, y) {
             const dragElements = [...container.querySelectorAll('.draggable-song-item:not([style*="opacity: 0.5"])')];
-            return dragElements.reduce((closest, child) => {{
+            return dragElements.reduce((closest, child) => {
                 const box = child.getBoundingClientRect();
                 const offset = y - box.top - box.height / 2;
-                if (offset < 0 && offset > closest.offset) {{
-                    return {{ offset: offset, element: child }};
-                }} else {{
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
                     return closest;
-                }}
-            }}, {{ offset: Number.NEGATIVE_INFINITY }).element;
-        }}
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
     </script>
     """
     st.components.v1.html(drag_drop_script, height=len(st.session_state.playlist_items) * 65 + 130)
@@ -300,10 +293,8 @@ else:
 # 곡 등록 섹션
 # ------------------------------------------------------------------
 st.divider()
-# 2. '곡 등록' 제목 명칭 및 사이즈 확인 적용
 st.markdown("##### 🎵 곡 등록")
 
-# 3. 탭 메뉴 구성
 tabs = st.tabs(["📂 악보집에서 선택", "✍️ 수동 입력", "⚙️ 악보집 신규 등록"])
 
 # --- TAB 1: 악보집에서 선택 ---
@@ -316,7 +307,6 @@ with tabs[0]:
         song_options = sorted(list(st.session_state.songbooks[selected_book].keys()))
         selected_song = st.selectbox("🎶 등록할 곡 선택 (풀다운)", song_options)
         
-        # 버튼 명칭 변경 최종 반영
         if st.button("🚀 선택한 곡 목록에 추가"):
             clean_title_only = re.sub(r'^\d+[\s\.\-_:\)]+', '', selected_song).strip()
             new_id = max([item["id"] for item in st.session_state.playlist_items]) + 1 if st.session_state.playlist_items else 1
@@ -371,7 +361,6 @@ if st.button("🔍 1단계: 파트별 주소 추출하기", use_container_width=
 
 if st.session_state.extracted_buffer:
     for song_name, data in list(st.session_state.extracted_buffer.items()):
-        # 대기열 리스트에 여전히 실존하는 곡인 경우에만 리포트 노출 검증
         if any(item["title"] == song_name for item in st.session_state.playlist_items):
             with st.expander(f"🎵 {song_name} 추출 결과 확인"):
                 cols = st.columns(3)
