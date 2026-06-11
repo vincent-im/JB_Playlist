@@ -19,7 +19,7 @@ except ImportError:
 # ------------------------------------------------------------------
 st.set_page_config(page_title="예본성가대 Playlist 생성 에이전트", layout="wide")
 
-# 1. 대제목 폰트 축소 및 명칭 변경
+# 대제목 폰트 축소 및 명칭 변경 반영
 st.markdown("## 🎼 예본성가대 Playlist 생성 에이전트")
 st.caption("유튜브 ID: vincent.jbim@gmail.com")
 
@@ -42,7 +42,7 @@ PART_MAPPING = {
 }
 
 # ------------------------------------------------------------------
-# 2. 🔍 곡 목록 동적 수집 엔진 (이미지/주소 패턴 기반 범용 파서)
+# 2. 🔍 곡 목록 동적 수집 엔진 (라인 지향형 범용 파서)
 # ------------------------------------------------------------------
 def extract_songs_from_joongang(songbook_url):
     """
@@ -237,15 +237,14 @@ def add_video_to_playlist(youtube, p_id, v_id):
 # 5. 사용자 인터페이스 (UI) 구현부
 # ------------------------------------------------------------------
 st.divider()
-# 2. 중간 제목 폰트 축소 및 명칭 변경
+# 중간 제목 축소 명칭 반영
 st.markdown("### 🎵 곡 등록")
 
-# 3. 세부 메뉴 탭 명칭 변경
+# 세부 메뉴 탭 구조 정의
 tabs = st.tabs(["📂 악보집에서 선택", "✍️ 수동 입력", "⚙️ 악보집 신규 등록"])
 
 # --- TAB 1: 악보집에서 선택 ---
 with tabs[0]:
-    # 4. 탭 내부 제목 축소 및 명칭 변경
     st.markdown("#### 📂 악보집에서 선택")
     if not st.session_state.songbooks:
         st.info("ℹ️ 활성화된 악보집이 없습니다. 먼저 '악보집 신규 등록' 탭에서 주소를 등록해 주세요.")
@@ -280,6 +279,7 @@ with tabs[1]:
 with tabs[2]:
     st.markdown("#### ⚙️ 악보집 신규 등록")
     with st.form("songbook_register_form", clear_on_submit=True):
+        # 💡 [🚨 핵심 버그 교정 부]: st.st.text_input의 중복 오타를 st.text_input으로 완벽히 정정하여 데이터 유실 차단
         book_name = st.text_input("악보집 이름 (예: 중앙성가48)")
         book_url = st.text_input("악보집 목록 HTML 주소")
         reg_btn = st.form_submit_button("신규 악보집 연동 실행")
@@ -294,7 +294,7 @@ with tabs[2]:
                 st.error("❌ 곡 목록 파싱에 실패했습니다. 주소 규격을 확인해 주세요.")
 
 # ------------------------------------------------------------------
-# 6. 📋 Playlist 등재 목록 및 순서 (5. 제목 수정 및 축소)
+# 6. Playlist 등재 목록 및 순서 조정 구역 (제목 축소 명칭 반영)
 # ------------------------------------------------------------------
 st.divider()
 st.markdown("#### 📋 Playlist 등재 목록 및 순서")
